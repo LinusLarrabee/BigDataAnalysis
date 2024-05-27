@@ -50,4 +50,6 @@ fig.update_layout(
     font_size=10
 )
 
+fig.write_image("/mnt/data/user_navigation_paths.png")
+
 fig.show()
