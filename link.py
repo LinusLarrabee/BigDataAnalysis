@@ -1,43 +1,39 @@
-import matplotlib.pyplot as plt
-import networkx as nx
-from collections import defaultdict
+import json
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import explode, col, collect_list, concat_ws
 
-# 定义用户访问数据
-data = {
-    "uvi": "user495",
-    "el": [
-        {"path": "/faq", "ct": "2024-05-27T11:40:36.263274"},
-        {"path": "/services", "ct": "2024-05-27T11:44:36.263274"},
-        {"path": "/contact", "ct": "2024-05-27T11:48:36.263274"},
-        {"path": "/services", "ct": "2024-05-27T11:55:36.263274"},
-        {"path": "/faq", "ct": "2024-05-27T11:44:36.263274"},
-        {"path": "/about", "ct": "2024-05-27T12:00:36.263274"}
-    ]
-}
+# 初始化Spark会话
+spark = SparkSession.builder.appName("ProcessJSON").getOrCreate()
 
-# 构建树状图
-G = nx.DiGraph()
-user_paths = defaultdict(list)
+# 读取txt文件内容，每行一个JSON对象
+file_path = 'input.txt'  # 请根据实际文件路径进行修改
 
-# 根据时间戳排序访问路径
-sorted_events = sorted(data["el"], key=lambda x: x["ct"])
-for i in range(len(sorted_events) - 1):
-    source = sorted_events[i]["path"]
-    target = sorted_events[i + 1]["path"]
-    G.add_edge(source, target)
+json_list = []
+with open(file_path, 'r') as f:
+    for line in f:
+        json_list.append(json.loads(line))
 
-# 生成布局
-pos = nx.spring_layout(G, k=1.5, iterations=50)
+# 将多行JSON对象转换为DataFrame
+rdd = spark.sparkContext.parallelize(json_list)
+df = spark.read.json(rdd)
 
-# 绘制节点
-nx.draw_networkx_nodes(G, pos, node_size=7000, node_color='lightblue')
+# 展开el字段
+df_exploded = df.select(col("uvi"), explode(col("el")).alias("el_item"))
 
-# 绘制边
-nx.draw_networkx_edges(G, pos, edgelist=G.edges(), edge_color='grey')
+# 提取path和ct字段
+df_path_ct = df_exploded.select(col("uvi"), col("el_item.path").alias("path"), col("el_item.ct").alias("ct"))
 
-# 绘制标签
-nx.draw_networkx_labels(G, pos, font_size=10)
+# 按照用户分组并收集所有路径到一个列表中
+user_paths = df_path_ct.groupBy("uvi").agg(collect_list("path").alias("paths"))
 
-# 显示图表
-plt.title("用户访问路径树状图")
-plt.show()
+# 将路径列表转换为字符串链路
+user_paths = user_paths.withColumn("path_chain", concat_ws(" -> ", col("paths")))
+
+# 统计每个链路的出现频率
+path_chain_counts = user_paths.groupBy("path_chain").count().orderBy("count", ascending=False)
+
+# 将DataFrame转换为Pandas DataFrame以便使用Matplotlib
+path_chain_counts_pd = path_chain_counts.toPandas()
+
+# 保存路径链路出现频率到csv文件
+path_chain_counts_pd.to_csv('path_chain_counts1.csv', index=False)

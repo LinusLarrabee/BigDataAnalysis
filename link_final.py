@@ -8,6 +8,8 @@ data = pd.read_csv(file_path)
 # 解析数据源
 paths = []
 weights = []
+full_paths = []  # 新增的列表，用于存储完整路径
+
 for index, row in data.iterrows():
     path = row['path_chain']
     weight = int(row['count'])
@@ -19,6 +21,7 @@ for index, row in data.iterrows():
         target_label = f"{pages[i+1]} ({i+2})"
         paths.append((source_label, target_label))
         weights.append(weight)
+        full_paths.append(path)  # 记录完整路径
 
 # 创建标签列表和索引映射
 labels = list(set([item for sublist in paths for item in sublist]))
@@ -50,6 +53,18 @@ fig.update_layout(
     font_size=10
 )
 
+# 保存图像
 fig.write_image("user_navigation_paths.png")
 
+# 显示图像
 fig.show()
+
+# 保存处理后的数据到CSV
+processed_data = pd.DataFrame({
+    'source': [labels[s] for s in source],
+    'target': [labels[t] for t in target],
+    'weight': weights,
+    'full_path': full_paths  # 添加完整路径信息
+})
+
+processed_data.to_csv('processed_path_chain_counts.csv', index=False)
