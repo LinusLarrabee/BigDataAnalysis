@@ -1,4 +1,3 @@
-import plotly.graph_objects as go
 import pandas as pd
 
 # 读取CSV文件
@@ -30,34 +29,6 @@ label_index = {label: i for i, label in enumerate(labels)}
 # 创建source和target列表
 source = [label_index[path[0]] for path in paths]
 target = [label_index[path[1]] for path in paths]
-
-# 创建Sankey图
-fig = go.Figure(go.Sankey(
-    node=dict(
-        pad=15,
-        thickness=20,
-        line=dict(color="black", width=0.5),
-        label=labels,
-        color="blue"
-    ),
-    link=dict(
-        source=source,
-        target=target,
-        value=weights
-    )
-))
-
-# 更新布局
-fig.update_layout(
-    title_text="User Navigation Paths",
-    font_size=10
-)
-
-# 保存图像
-fig.write_image("user_navigation_paths.png")
-
-# 显示图像
-fig.show()
 
 # 保存处理后的数据到CSV
 processed_data = pd.DataFrame({
