@@ -12,7 +12,13 @@ output_path = sys.argv[2]
 
 # 创建SparkContext和SparkSession
 sc = SparkContext(appName="PathTransformation")
-spark = SparkSession(sc)
+# 初始化 SparkSession
+spark = SparkSession.builder \
+    .appName(sc.appName) \
+    .config("spark.sql.catalogImplementation", "hive") \
+    .config("hive.metastore.client.factory.class", "com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory") \
+    .enableHiveSupport() \
+    .getOrCreate()
 
 # 从S3读取文件内容
 file_content = sc.textFile(input_path).collect()
@@ -60,6 +66,9 @@ df.select("uvi", "transformed_path").show(truncate=False)
 
 # 保存结果到 S3
 df.select("uvi", "transformed_path").write.csv(output_path, header=True)
+
+# 将 DataFrame 写入 Glue Catalog 中的 Hive 表
+df.select("uvi", "transformed_path").write.mode("overwrite").saveAsTable("default.transformed_paths")
 
 # 关闭 SparkSession
 spark.stop()
