@@ -1,14 +1,8 @@
-from pyspark import SparkContext
 from pyspark.sql import SparkSession
 
-# 初始化 SparkContext
-sc = SparkContext(appName="PathTransformation")
-
-# 使用已有的 SparkContext 初始化 SparkSession，并启用 Hive 支持和 Glue Data Catalog
+# 初始化 SparkSession
 spark = SparkSession.builder \
-    .appName(sc.appName) \
-    .config("spark.sql.warehouse.dir", "/user/hive/warehouse") \
-    .config("hive.metastore.uris", "thrift://ip-172-31-26-227.ec2.internal:9083") \
+    .appName("PathTransformation") \
     .enableHiveSupport() \
     .getOrCreate()
 

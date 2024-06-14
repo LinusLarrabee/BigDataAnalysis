@@ -15,7 +15,7 @@ def log(message):
     logger.info(message)
     sys.stdout.flush()
 
-def main(input_path, output_path, new_table_name):
+def main(input_path, output_path, new_table_name, processed_table_name):
     try:
         log("Starting Spark job...")
 
@@ -23,6 +23,12 @@ def main(input_path, output_path, new_table_name):
         sc = SparkContext(appName="PathTransformation")
         spark = SparkSession.builder \
             .appName(sc.appName) \
+            .config("spark.executor.memory", "4g") \
+            .config("spark.executor.cores", "2") \
+            .config("spark.executor.instances", "4") \
+            .config("spark.dynamicAllocation.enabled", "true") \
+            .config("spark.dynamicAllocation.minExecutors", "2") \
+            .config("spark.dynamicAllocation.maxExecutors", "10") \
             .config("spark.log4jHotPatch.enabled", "false") \
             .enableHiveSupport() \
             .getOrCreate()
@@ -95,6 +101,50 @@ def main(input_path, output_path, new_table_name):
         log(f"Saving results to S3: {output_path}")
         df.select("uvi", "transformed_path").write.csv(output_path, header=True)
 
+        # 新增逻辑：统计链路数量并存储到Hive
+        log("Starting path chain count processing...")
+
+        # 从Hive表读取数据
+        df = spark.sql(f"SELECT * FROM {new_table_name}")
+
+        # 统计链路数量
+        path_counts = df.groupBy("transformed_path").count()
+        log("Path chain counts calculated.")
+
+        # 处理链路数据
+        paths = []
+        weights = []
+        full_paths = []
+
+        def process_paths(row):
+            path = row["transformed_path"]
+            weight = row["count"]
+            pages = path.split(" -> ")
+            for i in range(len(pages) - 1):
+                source_label = f"{pages[i]} ({i+1})"
+                target_label = f"{pages[i+1]} ({i+2})"
+                paths.append((source_label, target_label))
+                weights.append(weight)
+                full_paths.append(path)
+
+        path_counts.foreach(process_paths)
+
+        # 创建处理后的DataFrame
+        processed_df = spark.createDataFrame(zip(paths, weights, full_paths), schema=["source_target", "weight", "full_path"])
+
+        # 分割source_target列为source和target
+        split_col = F.split(processed_df["source_target"], " -> ")
+        processed_df = processed_df.withColumn("source", split_col.getItem(0)).withColumn("target", split_col.getItem(1)).drop("source_target")
+
+        log(f"Dropping table if it exists: {processed_table_name}")
+        spark.sql(f"DROP TABLE IF EXISTS {processed_table_name}")
+
+        log(f"Writing processed DataFrame to Hive table: {processed_table_name}")
+        processed_df.write.mode("overwrite").format("parquet").saveAsTable(processed_table_name)
+
+        log(f"Reading from Hive table: {processed_table_name}")
+        spark.sql(f"SELECT * FROM {processed_table_name}").show()
+
     except Exception as e:
         log(f"An error occurred: {str(e)}")
 
@@ -104,12 +154,13 @@ def main(input_path, output_path, new_table_name):
         log("SparkSession stopped.")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        log("Usage: script <input_path> <output_path> <new_table_name>")
+    if len(sys.argv) != 5:
+        log("Usage: script <input_path> <output_path> <new_table_name> <processed_table_name>")
         sys.exit(-1)
 
     input_path = sys.argv[1]
     output_path = sys.argv[2]
     new_table_name = sys.argv[3]
+    processed_table_name = sys.argv[4]
 
-    main(input_path, output_path, new_table_name)
+    main(input_path, output_path, new_table_name, processed_table_name)
