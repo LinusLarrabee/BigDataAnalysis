@@ -57,6 +57,7 @@ def main(input_path, output_path, new_table_name, processed_table_name):
         # 创建 DataFrame
         df = spark.createDataFrame(json_list, schema)
         log("DataFrame created.")
+        log(f"DataFrame count: {df.count()}")
 
         # 转换时间戳字段为 TimestampType
         df = df.withColumn("el", F.explode("el")) \
@@ -65,10 +66,12 @@ def main(input_path, output_path, new_table_name, processed_table_name):
             .drop("el") \
             .withColumn("ct", F.to_timestamp("ct"))
         log("Timestamp fields converted.")
+        log(f"DataFrame count after timestamp conversion: {df.count()}")
 
         # 重新聚合数据
         df = df.groupBy("uvi").agg(F.collect_list(F.struct("path", "ct")).alias("el"))
         log("Data aggregated.")
+        log(f"DataFrame count after aggregation: {df.count()}")
 
         # 处理路径转换
         def transform_path(el):
@@ -80,6 +83,7 @@ def main(input_path, output_path, new_table_name, processed_table_name):
 
         df = df.withColumn("transformed_path", transform_path_udf(F.col("el")))
         log("Path transformation applied.")
+        log(f"DataFrame count after path transformation: {df.count()}")
 
         # 展示结果
         log("Transformed DataFrame:")
@@ -104,44 +108,48 @@ def main(input_path, output_path, new_table_name, processed_table_name):
         # 新增逻辑：统计链路数量并存储到Hive
         log("Starting path chain count processing...")
 
-        # 从Hive表读取数据
-        df = spark.sql(f"SELECT * FROM {new_table_name}")
-
         # 统计链路数量
         path_counts = df.groupBy("transformed_path").count()
         log("Path chain counts calculated.")
+        log(f"Path chain counts DataFrame count: {path_counts.count()}")
 
         # 处理链路数据
-        paths = []
-        weights = []
-        full_paths = []
-
-        def process_paths(row):
-            path = row["transformed_path"]
-            weight = row["count"]
+        def process_paths(path, count):
             pages = path.split(" -> ")
+            paths = []
+            weights = []
+            full_paths = []
             for i in range(len(pages) - 1):
                 source_label = f"{pages[i]} ({i+1})"
                 target_label = f"{pages[i+1]} ({i+2})"
-                paths.append((source_label, target_label))
-                weights.append(weight)
-                full_paths.append(path)
+                paths.append((source_label, target_label, count, path))
+            return paths
 
-        path_counts.foreach(process_paths)
+        # 使用flatMap进行路径处理
+        processed_paths = path_counts.rdd.flatMap(lambda row: process_paths(row['transformed_path'], row['count']))
+
+        # 定义处理后的Schema
+        processed_schema = StructType([
+            StructField("source", StringType(), True),
+            StructField("target", StringType(), True),
+            StructField("weight", StringType(), True),
+            StructField("full_path", StringType(), True)
+        ])
 
         # 创建处理后的DataFrame
-        processed_df = spark.createDataFrame(zip(paths, weights, full_paths), schema=["source_target", "weight", "full_path"])
+        processed_df = spark.createDataFrame(processed_paths, processed_schema)
+        log("Processed DataFrame created.")
+        log(f"Processed DataFrame count: {processed_df.count()}")
 
-        # 分割source_target列为source和target
-        split_col = F.split(processed_df["source_target"], " -> ")
-        processed_df = processed_df.withColumn("source", split_col.getItem(0)).withColumn("target", split_col.getItem(1)).drop("source_target")
-
+        # 删除已有的Hive表
         log(f"Dropping table if it exists: {processed_table_name}")
         spark.sql(f"DROP TABLE IF EXISTS {processed_table_name}")
 
+        # 将处理后的 DataFrame 写入 Hive 表
         log(f"Writing processed DataFrame to Hive table: {processed_table_name}")
         processed_df.write.mode("overwrite").format("parquet").saveAsTable(processed_table_name)
 
+        # 验证写入的表
         log(f"Reading from Hive table: {processed_table_name}")
         spark.sql(f"SELECT * FROM {processed_table_name}").show()
 
