@@ -6,6 +6,7 @@ from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import StringType, ArrayType, StructType, StructField
 from io import StringIO
+from datetime import datetime
 
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +16,7 @@ def log(message):
     logger.info(message)
     sys.stdout.flush()
 
-def main(input_path, output_path, new_table_name, processed_table_name):
+def main(date, output_path, new_table_name, processed_table_name, file_count):
     try:
         log("Starting Spark job...")
 
@@ -35,9 +36,19 @@ def main(input_path, output_path, new_table_name, processed_table_name):
 
         log("SparkSession created.")
 
-        # 从S3读取文件内容
-        file_content = sc.textFile(input_path).collect()
-        file_content = "\n".join(file_content)
+        # 生成输入路径
+        bucket = 'beta-tauc-data-analysis'
+        date_str = datetime.strptime(date, '%Y-%m-%d').strftime('%Y/%m/%d')
+        input_path = f's3://{bucket}/local/uat/aps1//{date_str}/messages-*.json'
+
+        # 从S3读取文件列表
+        files = sc.textFile(input_path).take(file_count)
+        log(f"File paths to process: {files}")
+
+        file_content = ""
+        for file in files:
+            file_content += "\n".join(sc.textFile(file).collect())
+
         log(f"File content read from {input_path}")
 
         # 读取文件内容，每行一个 JSON 对象
@@ -162,13 +173,14 @@ def main(input_path, output_path, new_table_name, processed_table_name):
         log("SparkSession stopped.")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        log("Usage: script <input_path> <output_path> <new_table_name> <processed_table_name>")
+    if len(sys.argv) != 6:
+        log("Usage: script <date> <output_path> <new_table_name> <processed_table_name> <file_count>")
         sys.exit(-1)
 
-    input_path = sys.argv[1]
+    date = sys.argv[1]
     output_path = sys.argv[2]
     new_table_name = sys.argv[3]
     processed_table_name = sys.argv[4]
+    file_count = int(sys.argv[5])
 
-    main(input_path, output_path, new_table_name, processed_table_name)
+    main(date, output_path, new_table_name, processed_table_name, file_count)
