@@ -4,9 +4,8 @@ import logging
 from pyspark import SparkContext
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
-from pyspark.sql.types import StringType, ArrayType, StructType, StructField
-from io import StringIO
-from datetime import datetime
+from pyspark.sql.types import StringType, ArrayType, StructType, StructField, MapType, LongType
+from datetime import datetime, timedelta
 
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +15,15 @@ def log(message):
     logger.info(message)
     sys.stdout.flush()
 
-def main(date, output_path, new_table_name, processed_table_name, file_count):
+def generate_date_range(start_date, end_date):
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    delta = timedelta(days=1)
+    while start <= end:
+        yield start.strftime("%Y/%m/%d")
+        start += delta
+
+def main(start_date, end_date, new_table_name_prefix, processed_table_name_prefix):
     try:
         log("Starting Spark job...")
 
@@ -36,71 +43,96 @@ def main(date, output_path, new_table_name, processed_table_name, file_count):
 
         log("SparkSession created.")
 
-        # 生成输入路径
+        all_json_list = []
         bucket = 'beta-tauc-data-analysis'
-        date_str = datetime.strptime(date, '%Y-%m-%d').strftime('%Y/%m/%d')
-        input_path = f's3://{bucket}/local/uat/aps1//{date_str}/messages-*.json'
 
-        # 从S3读取文件列表
-        files = sc.textFile(input_path).take(file_count)
-        log(f"File paths to process: {files}")
+        for date_str in generate_date_range(start_date, end_date):
+            input_path = f's3://{bucket}/local/uat/aps1/{date_str}/messages-*.json'
+            log(f"Reading data from {input_path}")
 
-        file_content = ""
-        for file in files:
-            file_content += "\n".join(sc.textFile(file).collect())
+            # 从S3读取文件内容
+            file_rdd = sc.textFile(input_path)
+            log(f"File content read from {input_path}")
 
-        log(f"File content read from {input_path}")
+            # 读取文件内容，每行一个 JSON 对象
+            json_list = file_rdd.map(lambda x: json.loads(x)).collect()
+            log(f"Number of JSON objects read: {len(json_list)}")
+            all_json_list.extend(json_list)
 
-        # 读取文件内容，每行一个 JSON 对象
-        json_list = [json.loads(line) for line in StringIO(file_content)]
+        # 检查是否读取到任何数据
+        if not all_json_list:
+            log("No data found for the specified date range.")
+            return
+
+        # 添加调试日志以查看所有 JSON 对象的结构
+        for i, json_obj in enumerate(all_json_list[:5]):  # 只打印前5个对象以避免日志过长
+            log(f"JSON object {i}: {json.dumps(json_obj, indent=2)}")
+
+        # 解析JSON对象中的"payload"字段并加载其内容
+        parsed_json_list = []
+        for json_obj in all_json_list:
+            try:
+                if isinstance(json_obj, list):
+                    continue  # 跳过列表对象
+                payload_str = json_obj.get('payload')
+                payload = json.loads(payload_str)
+                message = json.loads(payload.get('message'))
+                data_collector = message.get('dataCollectorDTO')
+                parsed_json_list.append({
+                    'uvi': data_collector.get('uvi'),
+                    'el': data_collector.get('el')
+                })
+            except Exception as e:
+                log(f"Error parsing JSON object: {e}")
+                continue
 
         # 定义数据模式
         schema = StructType([
             StructField("uvi", StringType(), True),
             StructField("el", ArrayType(
                 StructType([
+                    StructField("eid", StringType(), True),
+                    StructField("ep", MapType(StringType(), StringType()), True),
+                    StructField("ct", LongType(), True),
                     StructField("path", StringType(), True),
-                    StructField("ct", StringType(), True)  # 使用StringType读取时间戳
+                    StructField("usi", StringType(), True),
+                    StructField("pvi", StringType(), True)
                 ])
             ), True)
         ])
 
         # 创建 DataFrame
-        df = spark.createDataFrame(json_list, schema)
+        df = spark.createDataFrame(parsed_json_list, schema)
         log("DataFrame created.")
         log(f"DataFrame count: {df.count()}")
 
-        # 转换时间戳字段为 TimestampType
+        # 暂时跳过 `eid` 为 `pageView` 的过滤操作，只展开 `el` 列
         df = df.withColumn("el", F.explode("el")) \
-            .withColumn("path", F.col("el.path")) \
+            .withColumn("eid", F.col("el.eid")) \
+            .withColumn("ep", F.col("el.ep")) \
             .withColumn("ct", F.col("el.ct")) \
+            .withColumn("path", F.col("el.path")) \
+            .withColumn("usi", F.col("el.usi")) \
+            .withColumn("pvi", F.col("el.pvi")) \
             .drop("el") \
-            .withColumn("ct", F.to_timestamp("ct"))
-        log("Timestamp fields converted.")
-        log(f"DataFrame count after timestamp conversion: {df.count()}")
+            .withColumn("ct", F.to_timestamp(F.col("ct") / 1000))
+        log("Transformed DataFrame.")
+        log(f"DataFrame count after transformation: {df.count()}")
 
-        # 重新聚合数据
-        df = df.groupBy("uvi").agg(F.collect_list(F.struct("path", "ct")).alias("el"))
-        log("Data aggregated.")
+        # 重新聚合数据，按 `ct` 排序
+        df = df.groupBy("uvi").agg(F.collect_list(F.struct("eid", "ep", "ct", "path", "usi", "pvi")).alias("el"))
+        df = df.withColumn("el", F.expr("array_sort(el, (left, right) -> case when left.ct < right.ct then -1 when left.ct > right.ct then 1 else 0 end)"))
+        log("Aggregated and sorted DataFrame.")
         log(f"DataFrame count after aggregation: {df.count()}")
-
-        # 处理路径转换
-        def transform_path(el):
-            paths = [e["path"] for e in el]
-            transformed_path = " -> ".join(paths)
-            return transformed_path
-
-        transform_path_udf = F.udf(transform_path, StringType())
-
-        df = df.withColumn("transformed_path", transform_path_udf(F.col("el")))
-        log("Path transformation applied.")
-        log(f"DataFrame count after path transformation: {df.count()}")
 
         # 展示结果
         log("Transformed DataFrame:")
-        df.select("uvi", "transformed_path").show(truncate=False)
+        df.select("uvi", "el").show(truncate=False)
 
         # 删除已有的Hive表
+        new_table_name = f"{new_table_name_prefix}_{start_date.replace('-', '_')}_to_{end_date.replace('-', '_')}"
+        processed_table_name = f"{processed_table_name_prefix}_{start_date.replace('-', '_')}_to_{end_date.replace('-', '_')}"
+
         log(f"Dropping table if it exists: {new_table_name}")
         spark.sql(f"DROP TABLE IF EXISTS {new_table_name}")
 
@@ -112,15 +144,21 @@ def main(date, output_path, new_table_name, processed_table_name, file_count):
         log(f"Reading from Hive table: {new_table_name}")
         spark.sql(f"SELECT * FROM {new_table_name}").show()
 
+        # 确定输出路径
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        result_path = f"s3://{bucket}/result/link-analysis/{start_date}_to_{end_date}/{timestamp}/"
+
         # 保存结果到 S3
-        log(f"Saving results to S3: {output_path}")
-        df.select("uvi", "transformed_path").write.csv(output_path, header=True)
+        log(f"Saving results to S3: {result_path}")
+        df.select("uvi", "el").write.json(result_path)
 
         # 新增逻辑：统计链路数量并存储到Hive
         log("Starting path chain count processing...")
 
         # 统计链路数量
-        path_counts = df.groupBy("transformed_path").count()
+        path_counts = df.withColumn("transformed_path", F.expr("transform(el, x -> x.path)")) \
+            .withColumn("transformed_path", F.expr("concat_ws(' -> ', transformed_path)")) \
+            .groupBy("transformed_path").count()
         log("Path chain counts calculated.")
         log(f"Path chain counts DataFrame count: {path_counts.count()}")
 
@@ -128,8 +166,6 @@ def main(date, output_path, new_table_name, processed_table_name, file_count):
         def process_paths(path, count):
             pages = path.split(" -> ")
             paths = []
-            weights = []
-            full_paths = []
             for i in range(len(pages) - 1):
                 source_label = f"{pages[i]} ({i+1})"
                 target_label = f"{pages[i+1]} ({i+2})"
@@ -173,14 +209,13 @@ def main(date, output_path, new_table_name, processed_table_name, file_count):
         log("SparkSession stopped.")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
-        log("Usage: script <date> <output_path> <new_table_name> <processed_table_name> <file_count>")
+    if len(sys.argv) != 5:
+        log("Usage: script <start_date> <end_date> <new_table_name_prefix> <processed_table_name_prefix>")
         sys.exit(-1)
 
-    date = sys.argv[1]
-    output_path = sys.argv[2]
-    new_table_name = sys.argv[3]
-    processed_table_name = sys.argv[4]
-    file_count = int(sys.argv[5])
+    start_date = sys.argv[1]
+    end_date = sys.argv[2]
+    new_table_name_prefix = sys.argv[3]
+    processed_table_name_prefix = sys.argv[4]
 
-    main(date, output_path, new_table_name, processed_table_name, file_count)
+    main(start_date, end_date, new_table_name_prefix, processed_table_name_prefix)
