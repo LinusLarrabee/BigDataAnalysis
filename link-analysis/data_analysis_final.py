@@ -22,27 +22,23 @@ def generate_date_range(start_date, end_date):
         start += delta
 
 def extract_data_from_json(json_obj):
-    extracted_data = []
     try:
-        if isinstance(json_obj, dict):
-            payload_str = json_obj.get('payload')
-            if payload_str:
-                payload = json.loads(payload_str)
-                message_str = payload.get('message')
-                if message_str:
-                    message = json.loads(message_str)
-                    data_collector = message.get('dataCollectorDTO')
-                    if data_collector:
-                        uvi = data_collector.get('uvi')
-                        events = data_collector.get('el')
-                        if isinstance(events, list):
-                            for event in events:
-                                eid = event.get('eid')
-                                ct = event.get('ct')
-                                extracted_data.append((uvi, eid, ct))
+        payload_str = json_obj.get('payload')
+        payload = json.loads(payload_str)
+        message_str = payload.get('message')
+        message = json.loads(message_str)
+        data_collector = message.get('dataCollectorDTO')
+        uvi = data_collector.get('uvi')
+        events = data_collector.get('el')
+        extracted_data = []
+        for event in events:
+            eid = event.get('eid')
+            ct = event.get('ct')
+            extracted_data.append((uvi, eid, ct))
+        return extracted_data
     except Exception as e:
         log(f"Error parsing JSON object: {e}")
-    return extracted_data
+        return []
 
 def main(start_date, end_date):
     try:
@@ -68,7 +64,7 @@ def main(start_date, end_date):
         bucket = 'beta-tauc-data-analysis'
 
         for date_str in generate_date_range(start_date, end_date):
-            input_path = f's3://{bucket}/local/uat/aps1/{date_str}/messages-*.json'
+            input_path = f's3://{bucket}/local/uat-use1/{date_str}/messages-*.json'
             log(f"Reading data from {input_path}")
 
             # 从S3读取文件内容
@@ -89,16 +85,17 @@ def main(start_date, end_date):
 
         # 解析JSON对象并提取所需的字段
         parsed_json_list = []
-        for i, json_obj in enumerate(all_json_list):
+        for json_obj in all_json_list:
             extracted_data = extract_data_from_json(json_obj)
             parsed_json_list.extend(extracted_data)
 
-        # 打印前十条记录的 uvi, eid, ct
-        if parsed_json_list:
-            for i, record in enumerate(parsed_json_list[:10]):
-                log(f"Record {i}: uvi={record[0]}, eid={record[1]}, ct={record[2]}")
-        else:
-            log("No records parsed.")
+        # 保存前十条记录的 uvi, eid, ct 到 txt 文件
+        output_path = "/mnt/data/extracted_data.txt"
+        with open(output_path, 'w') as f:
+            for record in parsed_json_list:
+                f.write(f"{record[0]},{record[1]},{record[2]}\n")
+
+        log(f"Data successfully extracted and saved to {output_path}")
 
     except Exception as e:
         log(f"An error occurred: {str(e)}")
