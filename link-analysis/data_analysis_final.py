@@ -1,9 +1,9 @@
 import json
 import sys
 import logging
+import os
 from pyspark import SparkContext
 from pyspark.sql import SparkSession
-from datetime import datetime, timedelta
 
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
@@ -13,21 +13,44 @@ def log(message):
     logger.info(message)
     sys.stdout.flush()
 
-def generate_date_range(start_date, end_date):
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    delta = timedelta(days=1)
-    while start <= end:
-        yield start.strftime("%Y/%m/%d")
-        start += delta
+def extract_data_from_json(json_str):
+    try:
+        json_obj = json.loads(json_str)
+    except Exception as e:
+        log(f"Error parsing JSON object: {e}")
+        return []
 
-def extract_data_from_json(json_obj):
     try:
         payload_str = json_obj.get('payload')
+    except Exception as e:
+        log(f"Error getting 'payload' from JSON object: {e}")
+        return []
+
+    try:
         payload = json.loads(payload_str)
+    except Exception as e:
+        log(f"Error parsing 'payload' JSON string: {e}")
+        return []
+
+    try:
         message_str = payload.get('message')
+    except Exception as e:
+        log(f"Error getting 'message' from payload: {e}")
+        return []
+
+    try:
         message = json.loads(message_str)
+    except Exception as e:
+        log(f"Error parsing 'message' JSON string: {e}")
+        return []
+
+    try:
         data_collector = message.get('dataCollectorDTO')
+    except Exception as e:
+        log(f"Error getting 'dataCollectorDTO' from message: {e}")
+        return []
+
+    try:
         uvi = data_collector.get('uvi')
         events = data_collector.get('el')
         extracted_data = []
@@ -37,10 +60,10 @@ def extract_data_from_json(json_obj):
             extracted_data.append((uvi, eid, ct))
         return extracted_data
     except Exception as e:
-        log(f"Error parsing JSON object: {e}")
+        log(f"Error parsing events: {e}")
         return []
 
-def main(start_date, end_date):
+def main():
     try:
         log("Starting Spark job...")
 
@@ -60,37 +83,31 @@ def main(start_date, end_date):
 
         log("SparkSession created.")
 
-        all_json_list = []
-        bucket = 'beta-tauc-data-analysis'
+        # 本地文件路径
+        local_path = '/Users/sunhao/message.txt'
+        log(f"Reading data from {local_path}")
 
-        for date_str in generate_date_range(start_date, end_date):
-            input_path = f's3://{bucket}/local/uat-use1/{date_str}/messages-*.json'
-            log(f"Reading data from {input_path}")
+        # 从本地文件读取数据
+        file_rdd = sc.textFile(local_path)
+        log(f"File content read from {local_path}")
 
-            # 从S3读取文件内容
-            file_rdd = sc.textFile(input_path)
-            log(f"File content read from {input_path}")
-
-            # 读取文件内容，每行一个 JSON 对象
-            json_list = file_rdd.map(lambda x: json.loads(x)).collect()
-            log(f"Number of JSON objects read: {len(json_list)}")
-            all_json_list.extend(json_list)
-
-        # 检查是否读取到任何数据
-        if not all_json_list:
-            log("No data found for the specified date range.")
-            return
-
-        log(f"Total JSON objects collected: {len(all_json_list)}")
+        # 读取文件内容，每行一个 JSON 对象
+        json_list = file_rdd.collect()
+        log(f"Number of JSON objects read: {len(json_list)}")
 
         # 解析JSON对象并提取所需的字段
         parsed_json_list = []
-        for json_obj in all_json_list:
-            extracted_data = extract_data_from_json(json_obj)
+        for json_str in json_list:
+            extracted_data = extract_data_from_json(json_str)
             parsed_json_list.extend(extracted_data)
 
-        # 保存前十条记录的 uvi, eid, ct 到 txt 文件
-        output_path = "/mnt/data/extracted_data.txt"
+        # 确保输出路径存在
+        output_dir = "/mnt/data/"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        output_path = os.path.join(output_dir, "extracted_data.txt")
+
+        # 保存提取的数据到 txt 文件
         with open(output_path, 'w') as f:
             for record in parsed_json_list:
                 f.write(f"{record[0]},{record[1]},{record[2]}\n")
@@ -106,11 +123,4 @@ def main(start_date, end_date):
         log("SparkSession stopped.")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        log("Usage: script <start_date> <end_date>")
-        sys.exit(-1)
-
-    start_date = sys.argv[1]
-    end_date = sys.argv[2]
-
-    main(start_date, end_date)
+    main()
