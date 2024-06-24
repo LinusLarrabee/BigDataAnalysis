@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, udf
-from pyspark.sql.types import StringType
+from pyspark.sql.functions import col, udf, explode
+from pyspark.sql.types import StringType, MapType, ArrayType, StructType, StructField
+
 import json
 
 # 创建 SparkSession
@@ -10,7 +11,7 @@ spark = SparkSession.builder.appName("ExtractMessage").getOrCreate()
 spark.sparkContext.setLogLevel("INFO")
 
 # 定义文件路径
-file_path = "/Users/sunhao/message1.txt"
+file_path = "/Users/sunhao/message.txt"
 
 # 定义处理函数
 def extract_data_collector(json_str):
@@ -43,9 +44,6 @@ df = spark.read.text(file_path)
 # 应用 UDF 提取 dataCollectorDTO 部分
 df_with_data_collector = df.withColumn("dataCollectorDTO", extract_data_collector_udf(col("value")))
 
-# 显示结果
-df_with_data_collector.select("dataCollectorDTO").show(truncate=False)
-
 # 定义解析 uvi 的函数
 def extract_uvi(data_collector_str):
     try:
@@ -61,5 +59,42 @@ extract_uvi_udf = udf(extract_uvi, StringType())
 # 应用 UDF 提取 uvi
 df_with_uvi = df_with_data_collector.withColumn("uvi", extract_uvi_udf(col("dataCollectorDTO")))
 
+# 定义解析 el 的函数
+def extract_el(data_collector_str):
+    try:
+        data_collector = json.loads(data_collector_str)
+        el = data_collector['dataCollectorDTO']['el']
+        return json.dumps(el)
+    except Exception as e:
+        return str(e)
+
+# 注册 UDF
+extract_el_udf = udf(extract_el, StringType())
+
+# 应用 UDF 提取 el
+df_with_el = df_with_uvi.withColumn("el", extract_el_udf(col("dataCollectorDTO")))
+
+# 定义解析 el 列表中字段的函数
+def extract_eid_ct_ep(el_str):
+    try:
+        el_list = json.loads(el_str)
+        results = []
+        for item in el_list:
+            if item.get('eid') == 'pageView':
+                results.append({
+                    "eid": item.get('eid'),
+                    "ct": item.get('ct'),
+                    "ep_L": item.get('ep', {}).get('L')
+                })
+        return json.dumps(results)
+    except Exception as e:
+        return str(e)
+
+# 注册 UDF
+extract_eid_ct_ep_udf = udf(extract_eid_ct_ep, StringType())
+
+# 应用 UDF 提取 el 列表中的字段
+df_with_eid_ct_ep = df_with_el.withColumn("eid_ct_ep", extract_eid_ct_ep_udf(col("el")))
+
 # 显示结果
-df_with_uvi.select("uvi").show(truncate=False)
+df_with_eid_ct_ep.select("uvi", "eid_ct_ep").show(truncate=False)
