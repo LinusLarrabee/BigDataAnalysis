@@ -1,36 +1,25 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, udf
-from pyspark.sql.types import StringType
 import json
 
-# Initialize Spark session
+# 初始化 Spark 会话
 spark = SparkSession.builder.appName("ProcessMessages").getOrCreate()
 
-# Read the text file into an RDD
+# 读取文本文件到 RDD
 rdd = spark.sparkContext.textFile("/Users/sunhao/message.txt")
 
-# Function to process each row
-def process_row(row):
-    row = row.replace(r'\"', '"').replace(r'\\', '')
-    json_data = json.loads(row)
-    payload = json.loads(json_data['payload'])
-    message = json.loads(payload['message'])
-    return json.dumps(message)
+# 只读取第一行
+first_line = rdd.first()
 
-# Register the function as a UDF
-process_row_udf = udf(process_row, StringType())
+# 处理第一行数据，替换转义字符
+processed_line = first_line.replace(r'\"', '"').replace(r'\\', '')
 
-# Convert RDD to DataFrame
-df = rdd.toDF(["raw_message"])
+# 提取 JSON 数据中的 payload 和 message
+json_data = json.loads(processed_line)
+payload = json.loads(json_data["payload"])
+message = json.loads(payload["message"])
 
-# Apply the UDF to process the raw message
-processed_df = df.withColumn("processed_message", process_row_udf(col("raw_message")))
+# 创建 DataFrame
+df = spark.createDataFrame([message], schema=None)
 
-# Extract payload and message fields
-processed_df = processed_df.select(
-    col("processed_message"),
-    col("raw_message")
-)
-
-# Show the processed DataFrame
-processed_df.show(truncate=False)
+# 显示处理后的 DataFrame
+df.show(truncate=False)
