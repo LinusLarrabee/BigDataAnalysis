@@ -1,7 +1,6 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, udf, explode
-from pyspark.sql.types import StringType, MapType, ArrayType, StructType, StructField
-
+from pyspark.sql.functions import col, udf, explode, collect_list, sort_array, from_json
+from pyspark.sql.types import StringType, ArrayType, StructType, StructField, MapType
 import json
 
 # 创建 SparkSession
@@ -98,3 +97,33 @@ df_with_eid_ct_ep = df_with_el.withColumn("eid_ct_ep", extract_eid_ct_ep_udf(col
 
 # 显示结果
 df_with_eid_ct_ep.select("uvi", "eid_ct_ep").show(truncate=False)
+
+# 定义 schema
+schema = ArrayType(StructType([
+    StructField("eid", StringType(), True),
+    StructField("ct", StringType(), True),
+    StructField("ep_L", StringType(), True)
+]))
+
+# 注册 UDF
+extract_eid_ct_ep_udf = udf(extract_eid_ct_ep, StringType())
+
+# 应用 UDF 提取 el 列表中的字段
+df_with_eid_ct_ep = df_with_el.withColumn("eid_ct_ep_str", extract_eid_ct_ep_udf(col("el")))
+
+# 将 JSON 字符串转换为结构化数据
+df_with_eid_ct_ep = df_with_eid_ct_ep.withColumn("eid_ct_ep", from_json(col("eid_ct_ep_str"), schema))
+
+# 解析 eid_ct_ep 列表为多个行
+df_exploded = df_with_eid_ct_ep.withColumn("eid_ct_ep", explode(col("eid_ct_ep")))
+
+# 过滤掉没有 pageView 的记录
+df_filtered = df_exploded.filter(col("eid_ct_ep.eid") == "pageView")
+
+# 聚合相同的 uvi，合并并排序 eid_ct_ep
+df_aggregated = df_filtered.groupBy("uvi").agg(
+    sort_array(collect_list("eid_ct_ep")).alias("sorted_eid_ct_ep")
+)
+
+# 显示结果
+df_aggregated.select("uvi", "sorted_eid_ct_ep").show(truncate=False)
