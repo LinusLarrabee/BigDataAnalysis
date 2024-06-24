@@ -16,11 +16,11 @@ file_path = "/Users/sunhao/message1.txt"
 def extract_data_collector(json_str):
     try:
         # 替换转义字符
-        replaced_str = json_str.replace('\\', '')
+        replaced_str = json_str.replace('\\\\', '\\').replace('\\"', '"')
 
         # 查找 dataCollectorDTO 和 timeStamp 的索引
-        index_start = replaced_str.find("{\"dataCollectorDTO")
-        index_end = replaced_str.find("\",\"timeStamp")
+        index_start = replaced_str.find('{"dataCollectorDTO')
+        index_end = replaced_str.find('"timeStamp')
 
         # 检查索引是否合法
         if index_start == -1 or index_end == -1:
@@ -45,21 +45,3 @@ df_with_data_collector = df.withColumn("dataCollectorDTO", extract_data_collecto
 
 # 显示结果
 df_with_data_collector.select("dataCollectorDTO").show(truncate=False)
-
-# 定义解析 uvi 的函数
-def extract_uvi(data_collector_str):
-    try:
-        data_collector = json.loads(data_collector_str)
-        uvi = data_collector['dataCollectorDTO']['uvi']
-        return uvi
-    except Exception as e:
-        return str(e)
-
-# 注册 UDF
-extract_uvi_udf = udf(extract_uvi, StringType())
-
-# 应用 UDF 提取 uvi
-df_with_uvi = df_with_data_collector.withColumn("uvi", extract_uvi_udf(col("dataCollectorDTO")))
-
-# 显示结果
-df_with_uvi.select("uvi").show(truncate=False)
