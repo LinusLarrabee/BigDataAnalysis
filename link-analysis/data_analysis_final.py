@@ -1,7 +1,7 @@
 from pyspark import SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, udf, explode, collect_list, sort_array, from_json, regexp_replace, count
-from pyspark.sql.types import StringType, ArrayType, StructType, StructField
+from pyspark.sql.types import StringType, ArrayType, StructType, StructField, IntegerType
 from datetime import datetime, timedelta
 import json
 
@@ -132,41 +132,43 @@ df_path_list = df_filtered.groupBy("uvi").agg(
     collect_list("eid_ct_ep.ep_L").alias("PathList")
 )
 
-
+# 打印中间数据帧
+print("PathList DataFrame:")
+df_path_list.show(truncate=False)
 
 # 聚合相同的 PathList，计算权重
 df_aggregated_paths = df_path_list.groupBy("PathList").agg(
-    count("PathList").alias("weight")
+    count("PathList").cast(IntegerType()).alias("weight")
 )
+
 # 打印中间数据帧
-print("PathList DataFrame:")
+print("Aggregated Paths DataFrame:")
 df_aggregated_paths.show(truncate=False)
 
 processed_table_name = "default.sankey_edges"
 
 # 处理链路数据
 def process_paths(path, count):
-    pages = path.split(" -> ")
     paths = []
-    for i in range(len(pages) - 1):
-        source_label = f"{pages[i]} ({i+1})"
-        target_label = f"{pages[i+1]} ({i+2})"
-        paths.append((source_label, target_label, count, path))
+    for i in range(len(path) - 1):
+        source_label = f"{path[i]}"
+        target_label = f"{path[i+1]}"
+        paths.append((source_label, target_label, count, str(path)))
     return paths
 
 # 使用flatMap进行路径处理
-processed_paths = df_aggregated_paths.rdd.flatMap(lambda row: process_paths(row['transformed_path'], row['count']))
+processed_paths_rdd = df_aggregated_paths.rdd.flatMap(lambda row: process_paths(row['PathList'], row['weight']))
 
 # 定义处理后的Schema
 processed_schema = StructType([
     StructField("source", StringType(), True),
     StructField("target", StringType(), True),
-    StructField("weight", StringType(), True),
+    StructField("weight", IntegerType(), True),
     StructField("full_path", StringType(), True)
 ])
 
 # 创建处理后的DataFrame
-processed_df = spark.createDataFrame(processed_paths, processed_schema)
+processed_df = spark.createDataFrame(processed_paths_rdd, processed_schema)
 
 spark.sql(f"DROP TABLE IF EXISTS {processed_table_name}")
 
