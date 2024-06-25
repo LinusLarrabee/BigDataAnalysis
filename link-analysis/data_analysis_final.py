@@ -3,6 +3,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, udf, explode, collect_list, sort_array, from_json, regexp_replace, count
 from pyspark.sql.types import StringType, ArrayType, StructType, StructField, IntegerType
 from datetime import datetime, timedelta
+import sys
 import json
 
 # 生成日期范围
@@ -71,6 +72,10 @@ schema = ArrayType(StructType([
     StructField("ep_L", StringType(), True)
 ]))
 
+# 获取输入参数
+start_date = sys.argv[1]  # 起始日期
+end_date = sys.argv[2]    # 结束日期
+
 # 创建SparkContext和SparkSession
 sc = SparkContext(appName="PathTransformation")
 spark = SparkSession.builder \
@@ -91,21 +96,24 @@ extract_uvi_udf = udf(extract_uvi, StringType())
 extract_el_udf = udf(extract_el, StringType())
 extract_eid_ct_ep_udf = udf(extract_eid_ct_ep, StringType())
 
-# 生成日期范围
-start_date = "2024-06-24"  # 起始日期
-end_date = "2024-06-24"    # 结束日期
+# 初始化一个空的 DataFrame
+df_empty_schema = StructType([
+    StructField("value", StringType(), True)
+])
+df = spark.createDataFrame([], df_empty_schema)
 
+# 生成日期范围并读取数据
 bucket = 'beta-tauc-data-analysis'
-all_json_list = []
 
 for date_str in generate_date_range(start_date, end_date):
     input_path = f's3://{bucket}/local/uat/use1/{date_str}/messages-*.txt'
-    file_rdd = sc.textFile(input_path)
-    json_list = file_rdd.map(lambda x: json.loads(x)).collect()
-    all_json_list.extend(json_list)
-
-# 将 JSON 列表转换为 DataFrame
-df = spark.createDataFrame(all_json_list, StringType()).toDF("value")
+    try:
+        file_rdd = sc.textFile(input_path)
+        json_list = file_rdd.map(lambda x: json.loads(x)).collect()
+        df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
+        df = df.union(df_day)
+    except Exception as e:
+        print(f"Path not found: {input_path}, skipping.")
 
 # 应用 UDF 提取 dataCollectorDTO 部分
 df_with_data_collector = df.withColumn("dataCollectorDTO", extract_data_collector_udf(col("value")))
@@ -145,38 +153,7 @@ df_aggregated_paths = df_path_list.groupBy("PathList").agg(
 print("Aggregated Paths DataFrame:")
 df_aggregated_paths.show(truncate=False)
 
-processed_table_name = "default.sankey_edges"
-from pyspark.sql.types import IntegerType
+# 保存 df_aggregated_paths 到 Hive 表
+df_aggregated_paths.write.mode("overwrite").format("parquet").saveAsTable("default.aggregated_paths")
 
-# 处理链路数据
-def process_paths(path, count):
-    paths = []
-    for i in range(len(path) - 1):
-        source_label = f"{path[i]} ({i+1})"
-        target_label = f"{path[i+1]} ({i+2})"
-        paths.append((source_label, target_label, count, str(path)))
-    return paths
 
-# 使用flatMap进行路径处理
-processed_paths_rdd = df_aggregated_paths.rdd.flatMap(lambda row: process_paths(row['PathList'], row['weight']))
-
-# 定义处理后的Schema
-processed_schema = StructType([
-    StructField("source", StringType(), True),
-    StructField("target", StringType(), True),
-    StructField("weight", IntegerType(), True),
-    StructField("full_path", StringType(), True)
-])
-
-# 创建处理后的DataFrame
-processed_df = spark.createDataFrame(processed_paths_rdd, processed_schema)
-
-# 删除已有的Hive表
-processed_table_name = "default.sankey_edges"
-spark.sql(f"DROP TABLE IF EXISTS {processed_table_name}")
-
-# 将处理后的 DataFrame 写入 Hive 表
-processed_df.write.mode("overwrite").format("parquet").saveAsTable(processed_table_name)
-
-# 验证写入的表
-spark.sql(f"SELECT * FROM {processed_table_name}").show()
