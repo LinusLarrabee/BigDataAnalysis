@@ -1,7 +1,7 @@
 from pyspark import SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, udf, explode, collect_list, sort_array, from_json, regexp_replace, count
-from pyspark.sql.types import StringType, ArrayType, StructType, StructField, IntegerType
+from pyspark.sql.types import StringType, ArrayType, StructType, StructField
 from datetime import datetime, timedelta
 import json
 
@@ -129,47 +129,49 @@ df_filtered = df_filtered.withColumn("eid_ct_ep", col("eid_ct_ep").withField("ep
 
 # 按 uvi 聚合路径
 df_path_list = df_filtered.groupBy("uvi").agg(
-    sort_array(collect_list("eid_ct_ep.ep_L")).alias("PathList")
+    collect_list("eid_ct_ep.ep_L").alias("PathList")
 )
 
+
+
+# 聚合相同的 PathList，计算权重
+df_aggregated_paths = df_path_list.groupBy("PathList").agg(
+    count("PathList").alias("weight")
+)
 # 打印中间数据帧
 print("PathList DataFrame:")
-df_path_list.show(truncate=False)
+df_aggregated_paths.show(truncate=False)
 
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, explode, expr, array, sort_array, collect_list, size, split
+processed_table_name = "default.sankey_edges"
 
-# 拆分路径为单个节点
-df_exploded = df_path_list.withColumn("nodes", explode(col("PathList")))
+# 处理链路数据
+def process_paths(path, count):
+    pages = path.split(" -> ")
+    paths = []
+    for i in range(len(pages) - 1):
+        source_label = f"{pages[i]} ({i+1})"
+        target_label = f"{pages[i+1]} ({i+2})"
+        paths.append((source_label, target_label, count, path))
+    return paths
 
-# 将路径拆分为多个节点，并生成层级信息
-df_exploded = df_exploded.withColumn("nodes_split", split(col("nodes"), "/"))
-max_length = df_exploded.select(size(col("nodes_split")).alias("length")).agg({"length": "max"}).collect()[0][0]
+# 使用flatMap进行路径处理
+processed_paths = df_aggregated_paths.rdd.flatMap(lambda row: process_paths(row['transformed_path'], row['count']))
 
-for i in range(1, max_length + 1):
-    df_exploded = df_exploded.withColumn(f"level_{i}", col("nodes_split").getItem(i - 1))
+# 定义处理后的Schema
+processed_schema = StructType([
+    StructField("source", StringType(), True),
+    StructField("target", StringType(), True),
+    StructField("weight", StringType(), True),
+    StructField("full_path", StringType(), True)
+])
 
-# 生成边的起点和终点，同时去除循环
-edges = []
-for i in range(1, max_length):
-    df_edges = df_exploded.filter(col(f"level_{i}").isNotNull() & col(f"level_{i+1}").isNotNull())
-    df_edges = df_edges.select(
-        col(f"level_{i}").alias("source"),
-        col(f"level_{i+1}").alias("target")
-    ).distinct()  # 去除重复边
-    edges.append(df_edges)
+# 创建处理后的DataFrame
+processed_df = spark.createDataFrame(processed_paths, processed_schema)
 
-# 合并所有边
-df_edges = edges[0]
-for df_edge in edges[1:]:
-    df_edges = df_edges.union(df_edge)
+spark.sql(f"DROP TABLE IF EXISTS {processed_table_name}")
 
-# 计算权重
-df_edges = df_edges.groupBy("source", "target").count().withColumnRenamed("count", "weight")
+# 将处理后的 DataFrame 写入 Hive 表
+processed_df.write.mode("overwrite").format("parquet").saveAsTable(processed_table_name)
 
-# 写入Hive表
-df_edges.write.mode("overwrite").saveAsTable("sankey_edges")
-
-# 查看处理后的数据
-print("Edges DataFrame:")
-df_edges.show(truncate=False)
+# 验证写入的表
+spark.sql(f"SELECT * FROM {processed_table_name}").show()
