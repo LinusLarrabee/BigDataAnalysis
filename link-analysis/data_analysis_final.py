@@ -146,13 +146,14 @@ print("Aggregated Paths DataFrame:")
 df_aggregated_paths.show(truncate=False)
 
 processed_table_name = "default.sankey_edges"
+from pyspark.sql.types import IntegerType
 
 # 处理链路数据
 def process_paths(path, count):
     paths = []
     for i in range(len(path) - 1):
-        source_label = f"{path[i]}"
-        target_label = f"{path[i+1]}"
+        source_label = f"{path[i]} ({i+1})"
+        target_label = f"{path[i+1]} ({i+2})"
         paths.append((source_label, target_label, count, str(path)))
     return paths
 
@@ -170,6 +171,8 @@ processed_schema = StructType([
 # 创建处理后的DataFrame
 processed_df = spark.createDataFrame(processed_paths_rdd, processed_schema)
 
+# 删除已有的Hive表
+processed_table_name = "default.sankey_edges"
 spark.sql(f"DROP TABLE IF EXISTS {processed_table_name}")
 
 # 将处理后的 DataFrame 写入 Hive 表
