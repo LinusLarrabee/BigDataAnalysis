@@ -22,10 +22,10 @@ def extract_qoe(json_str):
 
         # 查找Qoe内容
         data_start = replaced_str.find('{"collectionRecords')
-        data_end = replaced_str.find('"collectionTime')
+        data_end = replaced_str.find('"timeStamp')
         if type_start == -1 or type_end == -1:
             return "string format error! str= " + replaced_str
-        qoe_data = replaced_str[data_start + 14:data_end]
+        qoe_data = replaced_str[data_start + 22:data_end-4]
         return {
             "QoeType": qoe_type,
             "QoeData": qoe_data
