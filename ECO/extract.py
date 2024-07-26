@@ -4,17 +4,6 @@ from pyspark.sql.types import StringType, StructType, StructField, ArrayType, Ma
 import json
 
 # 定义解析 JSON 数据的函数
-def extract_device_data_list(device_data_list, control_id):
-    controller_list = []
-    agent_list = []
-    for device in device_data_list:
-        if device.get('id', '') == control_id:
-            controller_list.append(device)
-        else:
-            agent_list.append(device)
-    return json.dumps(controller_list), json.dumps(agent_list), len(agent_list)
-
-# 定义处理函数
 def extract_qoe(json_str):
     try:
         # 去除转义和修剪空格
@@ -42,60 +31,67 @@ def extract_qoe(json_str):
         collection_time = qoe_json['collectionTime']
         device_data_list = qoe_json['deviceDataList']
 
-        # 使用函数解析 deviceDataList
-        controller_data, agent_data_list, agent_data_list_size = extract_device_data_list(device_data_list, control_id)
-
         return {
             "qoeType": qoe_type,
             "controllerId": control_id,
             "collectionTime": str(collection_time),
-            "controllerData": controller_data,
-            "agentDataList": agent_data_list,
-            "agentDataListSize": agent_data_list_size
+            "deviceDataList": json.dumps(device_data_list)
         }
     except Exception as e:
         raise ValueError(f"Error parsing JSON: {e}")
 
-# 定义解析controllerData的函数
-def parse_controller_data(controller_data_str, collection_time):
-    controller_data = json.loads(controller_data_str)[0]  # 转换为JSON对象并取第一个元素
+# 定义解析所有数据的函数
+def parse_data(device_data_str, collection_time, control_id):
+    device_data_list = json.loads(device_data_str)
     result = []
-    device_data_list = controller_data["collectionData"]
-    factor = controller_data["factor"]
-    for device_data in device_data_list:
-        band = device_data["band"]
-        wifi_coverage_score = (
-            factor.get("wifiCoverage2GScore") if "2.4" in band else
-            factor.get("wifiCoverage5GScore") if "5" in band else
-            factor.get("wifiCoverage6GScore") if "6" in band else None
-        )
-        result.append({
-            "id": controller_data["id"],
-            "band": band,
-            "collectionTime": collection_time,
-            "wifiCoverageScore": wifi_coverage_score,
-            "utilization": device_data["utilization"],
-            "averageRxRate": device_data["averageRxRate"],
-            "averageTxRate": device_data["averageTxRate"],
-            "bandWidth": device_data["bandWidth"],
-            "errorsPkt": device_data["errorsPkt"],
-            "ipAddress": device_data["ipAddress"],
-            "signalStrength": device_data["signalStrength"],
-            "packetsSent": device_data["packetsSent"],
-            "packetsReceived": device_data["packetsReceived"],
-            "errorsSent": device_data["errorsSent"],
-            "errorsReceived": device_data["errorsReceived"],
-            "bytesSent": device_data["bytesSent"],
-            "bytesReceived": device_data["bytesReceived"],
-            "noise": device_data["noise"],
-            "associatedDeviceNumberOfEntries": device_data["associatedDeviceNumberOfEntries"],
-            "congestionRate": device_data["congestionRate"]
-        })
+    for device in device_data_list:
+        band_count = len(device["collectionData"])
+        for device_data in device["collectionData"]:
+            band = device_data.get("band", None)
+            factor = device.get("factor", {})
+            wifi_coverage_score = (
+                factor.get("wifiCoverage2GScore") if "2.4" in band else
+                factor.get("wifiCoverage5GScore") if "5" in band else
+                factor.get("wifiCoverage6GScore") if "6" in band else None
+            ) if band else None
+            is_controller = factor.get("isController") == "1"
+            result.append({
+                "mainDeviceId": control_id,
+                "id": device.get("id"),
+                "band": band,
+                "collectionTime": collection_time,
+                "wifiCoverageScore": wifi_coverage_score,
+                "isController": is_controller,
+                "bandType": band_count,
+                "utilization": device_data.get("utilization"),
+                "averageRxRate": device_data.get("averageRxRate"),
+                "averageTxRate": device_data.get("averageTxRate"),
+                "bandWidth": device_data.get("bandWidth"),
+                "errorsPkt": device_data.get("errorsPkt"),
+                "ipAddress": device_data.get("ipAddress"),
+                "signalStrength": device_data.get("signalStrength"),
+                "packetsSent": device_data.get("packetsSent"),
+                "packetsReceived": device_data.get("packetsReceived"),
+                "errorsSent": device_data.get("errorsSent"),
+                "errorsReceived": device_data.get("errorsReceived"),
+                "bytesSent": device_data.get("bytesSent"),
+                "bytesReceived": device_data.get("bytesReceived"),
+                "noise": device_data.get("noise"),
+                "associatedDeviceNumberOfEntries": device_data.get("associatedDeviceNumberOfEntries"),
+                "congestionRate": device_data.get("congestionRate"),
+                "backhaulSta_macAddress": device_data["backhaulSta"]["macAddress"] if "backhaulSta" in device_data else None,
+                "backhaulSta_backhaulLinkType": device_data["backhaulSta"]["backhaulLinkType"] if "backhaulSta" in device_data else None,
+                "backhaulSta_linkRate": device_data["backhaulSta"]["linkRate"] if "backhaulSta" in device_data else None,
+                "backhaulSta_signalStrength": device_data["backhaulSta"]["signalStrength"] if "backhaulSta" in device_data else None,
+                "backhaulSta_utilization": device_data["backhaulSta"]["utilization"] if "backhaulSta" in device_data else None,
+                "backhaulSta_snr": device_data["backhaulSta"]["snr"] if "backhaulSta" in device_data else None
+            })
     return result
 
 # 初始化SparkSession
 spark = SparkSession.builder \
     .appName("ReadSingleFileJSON") \
+    .config("spark.sql.debug.maxToStringFields", "1000") \
     .getOrCreate()
 
 # 指定读取文件路径
@@ -106,9 +102,7 @@ schema = StructType([
     StructField("qoeType", StringType(), True),
     StructField("collectionTime", StringType(), True),
     StructField("controllerId", StringType(), True),
-    StructField("controllerData", StringType(), True),  # 存储为字符串
-    StructField("agentDataList", StringType(), True),  # 存储为字符串
-    StructField("agentDataListSize", IntegerType(), True)  # 存储列表的大小
+    StructField("deviceDataList", StringType(), True)  # 存储为字符串
 ])
 
 # 注册 UDF
@@ -126,20 +120,15 @@ df_qoe_kind.show(truncate=False)
 # 按 qoeType 判断是否进一步解析
 df_ap_data = df_qoe_kind.filter(df_qoe_kind.qoeType == "AP_DATA")
 
-# 定义controllerData的解析模式
-controller_data_schema = StructType([
-    StructField("id", StringType(), True),
-    StructField("factor", MapType(StringType(), StringType()), True),
-    StructField("metrics", MapType(StringType(), StringType()), True),
-    StructField("collectionData", ArrayType(MapType(StringType(), StringType())), True)
-])
-
-# 注册解析controllerData的UDF
-parse_controller_data_udf = udf(lambda controller_data_str, collection_time: parse_controller_data(controller_data_str, collection_time), ArrayType(StructType([
+# 注册解析所有数据的UDF
+parse_data_udf = udf(lambda device_data_str, collection_time, control_id: parse_data(device_data_str, collection_time, control_id), ArrayType(StructType([
+    StructField("mainDeviceId", StringType(), True),
     StructField("id", StringType(), True),
     StructField("band", StringType(), True),
     StructField("collectionTime", StringType(), True),
     StructField("wifiCoverageScore", StringType(), True),
+    StructField("isController", StringType(), True),
+    StructField("bandType", IntegerType(), True),
     StructField("utilization", StringType(), True),
     StructField("averageRxRate", StringType(), True),
     StructField("averageTxRate", StringType(), True),
@@ -155,13 +144,19 @@ parse_controller_data_udf = udf(lambda controller_data_str, collection_time: par
     StructField("bytesReceived", StringType(), True),
     StructField("noise", StringType(), True),
     StructField("associatedDeviceNumberOfEntries", StringType(), True),
-    StructField("congestionRate", StringType(), True)
+    StructField("congestionRate", StringType(), True),
+    StructField("backhaulSta_macAddress", StringType(), True),
+    StructField("backhaulSta_backhaulLinkType", StringType(), True),
+    StructField("backhaulSta_linkRate", StringType(), True),
+    StructField("backhaulSta_signalStrength", StringType(), True),
+    StructField("backhaulSta_utilization", StringType(), True),
+    StructField("backhaulSta_snr", StringType(), True)
 ])))
 
 # 应用UDF并展平结果
 df_split = df_ap_data.withColumn(
     "parsed_data",
-    explode(parse_controller_data_udf(col("controllerData"), col("collectionTime")))
+    explode(parse_data_udf(col("deviceDataList"), col("collectionTime"), col("controllerId")))
 ).select("parsed_data.*")
 
 # 显示结果
