@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, udf, from_json,explode
+from pyspark.sql.functions import col, udf, from_json, explode
 from pyspark.sql.types import StringType, StructType, StructField, ArrayType, MapType, IntegerType
 import json
 
@@ -56,6 +56,38 @@ def extract_qoe(json_str):
     except Exception as e:
         raise ValueError(f"Error parsing JSON: {e}")
 
+# 定义解析controllerData的函数
+def parse_controller_data(controller_data_str, collection_time):
+    controller_data = json.loads(controller_data_str)[0]  # 转换为JSON对象并取第一个元素
+    result = []
+    device_data_list = controller_data["collectionData"]
+    factor = controller_data["factor"]
+    for device_data in device_data_list:
+        band = device_data["band"]
+        wifi_coverage_score = (
+            factor.get("wifiCoverage2GScore") if "2.4" in band else
+            factor.get("wifiCoverage5GScore") if "5" in band else
+            factor.get("wifiCoverage6GScore") if "6" in band else None
+        )
+        result.append({
+            "id": controller_data["id"],
+            "band": band,
+            "wifiCoverageScore": wifi_coverage_score,
+            "collectionTime": collection_time,
+            "utilization": device_data["utilization"],
+            "averageRxRate": device_data["averageRxRate"],
+            "averageTxRate": device_data["averageTxRate"],
+            "channel": device_data["bandWidth"],
+            "errorsPkt": device_data["errorsPkt"],
+            "ipAddress": device_data["ipAddress"],
+            "packetsSent": device_data["packetsSent"],
+            "packetsReceived": device_data["packetsReceived"],
+            "bytesSent": device_data["bytesSent"],
+            "bytesReceived": device_data["bytesReceived"],
+            "noise": device_data["noise"]
+        })
+    return result
+
 # 初始化SparkSession
 spark = SparkSession.builder \
     .appName("ReadSingleFileJSON") \
@@ -89,45 +121,16 @@ df_qoe_kind.show(truncate=False)
 # 按 qoeType 判断是否进一步解析
 df_ap_data = df_qoe_kind.filter(df_qoe_kind.qoeType == "AP_DATA")
 
-# 显示 AP_DATA 的结果
-df_ap_data.show(truncate=False)
+# 定义controllerData的解析模式
+controller_data_schema = StructType([
+    StructField("id", StringType(), True),
+    StructField("factor", MapType(StringType(), StringType()), True),
+    StructField("metrics", MapType(StringType(), StringType()), True),
+    StructField("collectionData", ArrayType(MapType(StringType(), StringType())), True)
+])
 
-# 定义UDF来解析并拆分数据
-def parse_ap_data(controller_data, collection_time):
-    result = []
-    device_data_list = controller_data["collectionData"]
-    factor = controller_data["factor"]
-    for device_data in device_data_list:
-        band = device_data["band"]
-        if "2.4" in band:
-            wifi_coverage_score = factor.get("wifiCoverage2GScore")
-        elif "5" in band:
-            wifi_coverage_score = factor.get("wifiCoverage5GScore")
-        elif "6" in band:
-            wifi_coverage_score = factor.get("wifiCoverage6GScore")
-        else:
-            wifi_coverage_score = None
-
-        result.append({
-            "id": controller_data["id"],
-            "band": band,
-            "wifiCoverageScore": wifi_coverage_score,
-            "collectionTime": collection_time,
-            "utilization": device_data["utilization"],
-            "averageRxRate": device_data["averageRxRate"],
-            "averageTxRate": device_data["averageTxRate"],
-            "channel": device_data["bandWidth"],
-            "errorsPkt": device_data["errorsPkt"],
-            "ipAddress": device_data["ipAddress"],
-            "packetsSent": device_data["packetsSent"],
-            "packetsReceived": device_data["packetsReceived"],
-            "bytesSent": device_data["bytesSent"],
-            "bytesReceived": device_data["bytesReceived"],
-            "noise": device_data["noise"]
-        })
-    return result
-
-parse_ap_data_udf = udf(lambda controller_data, collection_time: parse_ap_data(controller_data, collection_time), ArrayType(StructType([
+# 注册解析controllerData的UDF
+parse_controller_data_udf = udf(lambda controller_data_str, collection_time: parse_controller_data(controller_data_str, collection_time), ArrayType(StructType([
     StructField("id", StringType(), True),
     StructField("band", StringType(), True),
     StructField("wifiCoverageScore", StringType(), True),
@@ -146,11 +149,13 @@ parse_ap_data_udf = udf(lambda controller_data, collection_time: parse_ap_data(c
 ])))
 
 # 应用UDF并展平结果
-df_split = df_ap_data.withColumn("parsed_data", explode(parse_ap_data_udf(col("controllerData"), col("collectionTime")))).select("parsed_data.*")
+df_split = df_ap_data.withColumn(
+    "parsed_data",
+    explode(parse_controller_data_udf(col("controllerData"), col("collectionTime")))
+).select("parsed_data.*")
 
-# 展示结果
+# 显示结果
 df_split.show(truncate=False)
-
 
 # 停止SparkSession
 spark.stop()
