@@ -68,7 +68,8 @@ df = spark.read.text(file_path)
 # 应用 UDF 提取 QoeType 和 QoeData 部分，并展开为单独的列
 df_qoe_kind = df.withColumn("Qoe", extract_udf(col("value"))).select(col("Qoe.*"))
 
-# 显示结果
+# 显示结果（不显示最后一列 deviceDataList）
+# df_qoe_kind.drop("deviceDataList").show(truncate=False)
 df_qoe_kind.show(truncate=False)
 
 # 按 qoeType 判断是否进一步解析
@@ -77,39 +78,58 @@ df_ap_data = df_qoe_kind.filter(df_qoe_kind.qoeType == "AP_DATA")
 # 定义进一步解析函数
 def parse_ap_data(device_data_list, control_id):
     try:
+        control_id = control_id.strip().replace(":", "")
         device_data_list = json.loads(device_data_list)
-        controller_list = []
-        agent_list = []
+        controller_radio = []
         wifi_coverage_2g_score = None
         for device in device_data_list:
-            if device.get('id', '') == control_id:
-                controller_list.append(device)
-                wifi_coverage_2g_score = device.get('factor', {}).get('wifiCoverage2GScore')
-            else:
-                agent_list.append(device)
-        return json.dumps(controller_list), json.dumps(agent_list), len(agent_list), wifi_coverage_2g_score
+            device_id = device.get('id', '').strip().replace(":", "")
+            print(f"Comparing device_id: {device_id} with control_id: {control_id}")
+            if device_id == control_id:
+
+                wifi_coverage_2g_score = device['factor']['wifiCoverage2GScore']
+                wifi_coverage_5g_score = device['factor']['wifiCoverage5GScore']
+                wifi_coverage_6g_score = device['factor']['wifiCoverage6GScore']
+                radio_detail = device['collectionData']
+                for radio in radio_detail:
+                    controller_radio.append({
+                        "band": radio["band"],
+                        "channel": radio['channel'],
+                        "noise": radio["noise"],
+                        "congestion_rate": radio["congestion_rate"]
+                    })
+
+
+
+        return wifi_coverage_2g_score,wifi_coverage_5g_score,wifi_coverage_6g_score
     except Exception as e:
-        return "[]", "[]", 0, None
+        return 0,None,None,None
+
 
 # 注册 UDF 进行进一步解析
-parse_ap_data_udf = udf(lambda device_data_list, control_id: parse_ap_data(device_data_list, control_id),
-                        StructType([
-                            StructField("controllerData", StringType(), True),
-                            StructField("agentDataList", StringType(), True),
-                            StructField("agentDataListSize", IntegerType(), True),
-                            StructField("wifiCoverage2GScore", StringType(), True)  # 获取wifiCoverage2GScore字段
-                        ]))
+parse_ap_data_udf = udf(lambda device_data_list, control_id: parse_ap_data(device_data_list, control_id), ArrayType(StructType([
+    # StructField("device_id", StringType(), True),
+    StructField("band", StringType(), True),
+    StructField("channel", IntegerType(), True),
+    StructField("noise", StringType(), True),
+    StructField("congestion_rate", StringType(), True),
+    # StructField("packet_error_rate", StringType(), True),
+    # StructField("wan_bandwidth", StringType(), True),
+    # StructField("wifi_coverage", StringType(), True),
+    # StructField("tx_rate", StringType(), True),
+    # StructField("rx_rate", IntegerType(), True)
+])))
 
 # 解析 deviceDataList 列为数组并进行进一步解析
 df_ap_data = df_ap_data.withColumn("parsedData", parse_ap_data_udf(col("deviceDataList"), col("controllerId"))) \
-    .select(col("*"), col("parsedData.*"))
+    .select(col("*"), col("parsedData.*")).drop("deviceDataList")
 
-# 显示进一步解析的结果
+# 显示进一步解析的结果，打印解析出来的JSON数据
 df_ap_data.show(truncate=False)
 
 # 按 controllerId 列进行分区保存
-output_base_path = "/euw1/your-isp-name/apData/2024/06/24"
-df_ap_data.write.partitionBy("controllerId").mode("overwrite").parquet(output_base_path)
+# output_base_path = "/euw1/your-isp-name/apData/2024/06/24"
+# df_ap_data.write.partitionBy("controllerId").mode("overwrite").parquet(output_base_path)
 
 # 停止SparkSession
 spark.stop()
