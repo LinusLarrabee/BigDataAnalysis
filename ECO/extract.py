@@ -72,19 +72,24 @@ def parse_controller_data(controller_data_str, collection_time):
         result.append({
             "id": controller_data["id"],
             "band": band,
-            "wifiCoverageScore": wifi_coverage_score,
             "collectionTime": collection_time,
+            "wifiCoverageScore": wifi_coverage_score,
             "utilization": device_data["utilization"],
             "averageRxRate": device_data["averageRxRate"],
             "averageTxRate": device_data["averageTxRate"],
-            "channel": device_data["bandWidth"],
+            "bandWidth": device_data["bandWidth"],
             "errorsPkt": device_data["errorsPkt"],
             "ipAddress": device_data["ipAddress"],
+            "signalStrength": device_data["signalStrength"],
             "packetsSent": device_data["packetsSent"],
             "packetsReceived": device_data["packetsReceived"],
+            "errorsSent": device_data["errorsSent"],
+            "errorsReceived": device_data["errorsReceived"],
             "bytesSent": device_data["bytesSent"],
             "bytesReceived": device_data["bytesReceived"],
-            "noise": device_data["noise"]
+            "noise": device_data["noise"],
+            "associatedDeviceNumberOfEntries": device_data["associatedDeviceNumberOfEntries"],
+            "congestionRate": device_data["congestionRate"]
         })
     return result
 
@@ -133,19 +138,24 @@ controller_data_schema = StructType([
 parse_controller_data_udf = udf(lambda controller_data_str, collection_time: parse_controller_data(controller_data_str, collection_time), ArrayType(StructType([
     StructField("id", StringType(), True),
     StructField("band", StringType(), True),
-    StructField("wifiCoverageScore", StringType(), True),
     StructField("collectionTime", StringType(), True),
+    StructField("wifiCoverageScore", StringType(), True),
     StructField("utilization", StringType(), True),
     StructField("averageRxRate", StringType(), True),
     StructField("averageTxRate", StringType(), True),
-    StructField("channel", StringType(), True),
+    StructField("bandWidth", StringType(), True),
     StructField("errorsPkt", StringType(), True),
     StructField("ipAddress", StringType(), True),
+    StructField("signalStrength", StringType(), True),
     StructField("packetsSent", StringType(), True),
     StructField("packetsReceived", StringType(), True),
+    StructField("errorsSent", StringType(), True),
+    StructField("errorsReceived", StringType(), True),
     StructField("bytesSent", StringType(), True),
     StructField("bytesReceived", StringType(), True),
-    StructField("noise", StringType(), True)
+    StructField("noise", StringType(), True),
+    StructField("associatedDeviceNumberOfEntries", StringType(), True),
+    StructField("congestionRate", StringType(), True)
 ])))
 
 # 应用UDF并展平结果
