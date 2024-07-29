@@ -151,45 +151,32 @@ def process_data(input_df):
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
 import json
-from datetime import datetime, timedelta
+import os
 
 # 初始化SparkSession
 spark = SparkSession.builder \
-    .appName("S3 Data Processing and Saving") \
+    .appName("Local Data Processing and Saving") \
     .getOrCreate()
 
-# 定义生成日期范围的函数
-def generate_date_range(start_date, end_date):
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    delta = timedelta(days=1)
-    current = start
-    while current <= end:
-        yield current.strftime("%Y/%m/%d")
-        current += delta
-
 # 定义读取数据的函数
-def read_data_from_s3(path):
+def read_data_from_local(path):
+    data = []
     try:
-        file_rdd = spark.sparkContext.textFile(path)
-        json_list = file_rdd.map(lambda x: json.loads(x)).collect()
-        return json_list
+        for file_name in os.listdir(path):
+            if file_name.startswith("messages-") and file_name.endswith(".txt"):
+                with open(os.path.join(path, file_name), 'r') as file:
+                    for line in file:
+                        data.append(json.loads(line))
     except Exception as e:
         print(f"Error reading data from {path}: {e}")
-        return []
+    return data
 
 # 定义process_data函数
-def process_data(input_df):
-    # 示例处理函数，可以根据实际需要进行修改
-    processed_df = input_df.withColumn("value_length", input_df["value"].length())
-    return processed_df
+
 
 # 参数
-bucket = 'beta-tauc-data-analysis'
-input_prefix = 'qoe/uat/aps1'  # 输入路径的前缀部分
-start_date = '2024-07-01'  # 起始日期
-end_date = '2024-07-10'    # 结束日期
-output_path = 's3://beta-tauc-data-analysis/ap-data/uat/aps1/a.csv'
+input_path = '/Users/sunhao/Library/Mobile Documents/com~apple~CloudDocs/Downloads/Downloads'  # 输入路径
+output_path = '/Users/sunhao/Library/Mobile Documents/com~apple~CloudDocs/Downloads/Downloads/a.csv'  # 输出文件路径
 
 # 初始化一个空的DataFrame
 schema = StructType([
@@ -198,16 +185,15 @@ schema = StructType([
 ])
 df = spark.createDataFrame([], schema)
 
-# 生成日期范围并读取数据
-for date_str in generate_date_range(start_date, end_date):
-    input_path = f's3://{bucket}/{input_prefix}/{date_str}/message-*.txt'
-    data = read_data_from_s3(input_path)
-    if data:
-        df_day = spark.createDataFrame(data, schema)
-        df = df.union(df_day)
+# 读取本地数据
+data = read_data_from_local(input_path)
+if data:
+    df = spark.createDataFrame(data, schema)
 
 # 调用process_data函数进行数据处理
 output_df = process_data(df)
+
+output_df.show(truncate=False)
 
 # 存储处理后的数据到a.csv
 output_df.coalesce(1).write.csv(output_path, mode='overwrite', header=True)
