@@ -34,11 +34,13 @@ def extract_qoe(json_str):
             collection_time = report['CollectionTime']
             controller_id = report['Device']['WiFi']['DataElements']['Network']['ControllerID']
             device_data_list = report['Device']['WiFi']['DataElements']['Network']['Device']
+            multiap_data_list = report.get('Device', {}).get('WiFi',{}).get('MultiAP', {}).get('APDevice', {})
             results.append({
                 "qoe_type": qoe_type,
                 "collection_time": str(collection_time),
                 "controller_id": controller_id,
-                "device_data_list": json.dumps(device_data_list)
+                "device_data_list": json.dumps(device_data_list),
+                "multiap_data_list": json.dumps(multiap_data_list)
             })
 
         return results
@@ -171,6 +173,36 @@ def parse_client_data(device_data_str, collection_time, controller_id):
         print(f"Error parsing CLIENT_DATA: {e}, data: {device_data_str}")
         raise
 
+# 定义解析 MULTIAP 数据的函数
+def parse_multiap_data(multiap_data_str, collection_time, controller_id):
+    try:
+        multiap_data_list = json.loads(multiap_data_str)
+        result = []
+        for device_id, device in multiap_data_list.items():
+            for ethernet_id, ethernet in device.get("X_TP_Ethernet", {}).items():
+                for assoc_device_id, assoc_device in ethernet.get("AssociatedDevice", {}).items():
+                    result.append({
+                        "controller_id": controller_id,
+                        "ap_device_id": assoc_device.get("APDeviceID"),
+                        "mac_address": assoc_device.get("MACAddress"),
+                        "ip_address": assoc_device.get("IPAddress"),
+                        "host_name": assoc_device.get("X_TP_HostName"),
+                        "up_speed": assoc_device.get("UpSpeed"),
+                        "down_speed": assoc_device.get("DownSpeed"),
+                        "link_speed": assoc_device.get("LinkSpeed"),
+                        "duplex_mode": assoc_device.get("DuplexMode"),
+                        "active": assoc_device.get("Active"),
+                        "packets_sent": assoc_device.get("PacketsSent"),
+                        "packets_received": assoc_device.get("PacketReceived"),
+                        "errors_sent": assoc_device.get("ErrorsSent"),
+                        "errors_received": assoc_device.get("ErrorsReceived"),
+                        "interface_type": assoc_device.get("InterfaceType")
+                    })
+        return result
+    except Exception as e:
+        print(f"Error parsing MULTIAP_DATA: {e}, data: {multiap_data_str}")
+        raise
+
 # 初始化SparkSession
 spark = SparkSession.builder \
     .appName("ReadLocalJSONFiles") \
@@ -185,7 +217,8 @@ schema = ArrayType(StructType([
     StructField("qoe_type", StringType(), True),
     StructField("collection_time", StringType(), True),
     StructField("controller_id", StringType(), True),
-    StructField("device_data_list", StringType(), True)
+    StructField("device_data_list", StringType(), True),
+    StructField("multiap_data_list", StringType(), True)
 ]))
 
 # 注册 UDF
@@ -194,7 +227,7 @@ extract_udf = udf(extract_qoe, schema)
 # 读取文件
 file_paths = []
 for file_name in os.listdir(input_path):
-    if file_name.startswith("messages-") and file_name.endswith(".txt"):
+    if file_name.startswith("messages-1722327915384.txt") and file_name.endswith(".txt"):
         file_paths.append(os.path.join(input_path, file_name))
 
 if not file_paths:
@@ -265,6 +298,7 @@ df_ap_split = df_ap_data.withColumn(
 
 # 解析 CLIENT_DATA 数据
 df_client_data = df_qoe_kind.filter(df_qoe_kind.qoe_type == "CLIENT_DATA")
+df_client_data.show(truncate=False)
 parse_client_data_udf = udf(lambda device_data_str, collection_time, controller_id: parse_client_data(device_data_str, collection_time, controller_id), ArrayType(StructType([
     StructField("controller_id", StringType(), True),
     StructField("device_id", StringType(), True),
@@ -301,6 +335,31 @@ df_client_split = df_client_data.withColumn(
     explode(parse_client_data_udf(col("device_data_list"), col("collection_time"), col("controller_id")))
 ).select("parsed_data.*")
 
+# 解析 MULTIAP 数据
+df_multiap_data = df_qoe_kind.filter(df_qoe_kind.qoe_type == "CLIENT_DATA")
+parse_multiap_data_udf = udf(lambda multiap_data_str, collection_time, controller_id: parse_multiap_data(multiap_data_str, collection_time, controller_id), ArrayType(StructType([
+    StructField("controller_id", StringType(), True),
+    StructField("ap_device_id", StringType(), True),
+    StructField("mac_address", StringType(), True),
+    StructField("ip_address", StringType(), True),
+    StructField("host_name", StringType(), True),
+    StructField("up_speed", StringType(), True),
+    StructField("down_speed", StringType(), True),
+    StructField("link_speed", StringType(), True),
+    StructField("duplex_mode", StringType(), True),
+    StructField("active", StringType(), True),
+    StructField("packets_sent", StringType(), True),
+    StructField("packets_received", StringType(), True),
+    StructField("errors_sent", StringType(), True),
+    StructField("errors_received", StringType(), True),
+    StructField("interface_type", StringType(), True)
+])))
+
+df_multiap_split = df_multiap_data.withColumn(
+    "parsed_data",
+    explode(parse_multiap_data_udf(col("multiap_data_list"), col("collection_time"), col("controller_id")))
+).select("parsed_data.*")
+
 # 存储 AP_DATA 处理后的数据到 ap_data.csv
 output_path_ap = os.path.join(input_path, 'ap_data.csv')  # 输出文件路径
 df_ap_split.coalesce(1).write.csv(output_path_ap, mode='overwrite', header=True)
@@ -308,6 +367,10 @@ df_ap_split.coalesce(1).write.csv(output_path_ap, mode='overwrite', header=True)
 # 存储 CLIENT_DATA 处理后的数据到 client_data.csv
 output_path_client = os.path.join(input_path, 'client_data.csv')  # 输出文件路径
 df_client_split.coalesce(1).write.csv(output_path_client, mode='overwrite', header=True)
+
+# 存储 MULTIAP 数据到 multiap_data.csv
+output_path_multiap = os.path.join(input_path, 'multiap_data.csv')  # 输出文件路径
+df_multiap_split.coalesce(1).write.csv(output_path_multiap, mode='overwrite', header=True)
 
 # 停止SparkSession
 spark.stop()
