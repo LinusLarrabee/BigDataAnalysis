@@ -34,7 +34,7 @@ def extract_qoe(json_str):
             collection_time = report['CollectionTime']
             controller_id = report['Device']['WiFi']['DataElements']['Network']['ControllerID']
             device_data_list = report['Device']['WiFi']['DataElements']['Network']['Device']
-            multiap_data_list = report.get('Device', {}).get('WiFi',{}).get('MultiAP', {}).get('APDevice', {})
+            multiap_data_list = report.get('Device', {}).get('WiFi', {}).get('MultiAP', {}).get('APDevice', {})
             results.append({
                 "qoe_type": qoe_type,
                 "collection_time": str(collection_time),
@@ -179,25 +179,24 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
         multiap_data_list = json.loads(multiap_data_str)
         result = []
         for device_id, device in multiap_data_list.items():
-            for ethernet_id, ethernet in device.get("X_TP_Ethernet", {}).items():
-                for assoc_device_id, assoc_device in ethernet.get("AssociatedDevice", {}).items():
-                    result.append({
-                        "controller_id": controller_id,
-                        "ap_device_id": assoc_device.get("APDeviceID"),
-                        "mac_address": assoc_device.get("MACAddress"),
-                        "ip_address": assoc_device.get("IPAddress"),
-                        "host_name": assoc_device.get("X_TP_HostName"),
-                        "up_speed": assoc_device.get("UpSpeed"),
-                        "down_speed": assoc_device.get("DownSpeed"),
-                        "link_speed": assoc_device.get("LinkSpeed"),
-                        "duplex_mode": assoc_device.get("DuplexMode"),
-                        "active": assoc_device.get("Active"),
-                        "packets_sent": assoc_device.get("PacketsSent"),
-                        "packets_received": assoc_device.get("PacketReceived"),
-                        "errors_sent": assoc_device.get("ErrorsSent"),
-                        "errors_received": assoc_device.get("ErrorsReceived"),
-                        "interface_type": assoc_device.get("InterfaceType")
-                    })
+            for assoc_device_id, assoc_device in device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}).items():
+                result.append({
+                    "controller_id": controller_id,
+                    "ap_device_id": assoc_device.get("APDeviceID"),
+                    "mac_address": assoc_device.get("MACAddress"),
+                    "ip_address": assoc_device.get("IPAddress"),
+                    "host_name": assoc_device.get("X_TP_HostName"),
+                    "up_speed": assoc_device.get("UpSpeed"),
+                    "down_speed": assoc_device.get("DownSpeed"),
+                    "link_speed": assoc_device.get("LinkSpeed"),
+                    "duplex_mode": assoc_device.get("DuplexMode"),
+                    "active": assoc_device.get("Active"),
+                    "packets_sent": assoc_device.get("PacketsSent"),
+                    "packets_received": assoc_device.get("PacketReceived"),
+                    "errors_sent": assoc_device.get("ErrorsSent"),
+                    "errors_received": assoc_device.get("ErrorsReceived"),
+                    "interface_type": assoc_device.get("InterfaceType")
+                })
         return result
     except Exception as e:
         print(f"Error parsing MULTIAP_DATA: {e}, data: {multiap_data_str}")
@@ -244,6 +243,7 @@ df_qoe_kind.show(truncate=False)
 
 # 解析 AP_DATA 数据
 df_ap_data = df_qoe_kind.filter(df_qoe_kind.qoe_type == "AP_DATA")
+df_ap_data.show(truncate=False)
 parse_ap_data_udf = udf(lambda device_data_str, collection_time, controller_id: parse_ap_data(device_data_str, collection_time, controller_id), ArrayType(StructType([
     StructField("controller_id", StringType(), True),
     StructField("device_id", StringType(), True),
