@@ -86,20 +86,22 @@ def parse_ap_data(device_data_str, collection_time, controller_id):
                     "band": band,
                     "noise": radio.get("Noise"),
                     "utilization": radio.get("Utilization"),
+                    "transmit": radio.get("Transmit"),
+                    "receive_self": radio.get("ReceiveSelf"),
+                    "receive_other": radio.get("ReceiveOther"),
+                    "congestion_rate": radio.get("X_TP_Congestion_Rate"),
+                    "associated_device_number_of_entries": radio.get("X_TP_AssociatedDeviceNumberOfEntries"),
                     "average_rx_rate": radio.get("X_TP_AverageRxRate"),
                     "average_tx_rate": radio.get("X_TP_AverageTxRate"),
                     "bandwidth": radio.get("X_TP_Bandwidth"),
+                    "bytes_sent": radio.get("X_TP_BytesSent"),
                     "errors_pkt": radio.get("X_TP_ErrorsPkt"),
                     "ip_address": radio.get("X_TP_IPAddress"),
-                    "signal_strength": radio.get("X_TP_SignalStrength"),
-                    "packets_sent": radio.get("X_TP_PacketsSent"),
                     "packets_received": radio.get("X_TP_PacketsReceived"),
+                    "packets_sent": radio.get("X_TP_PacketsSent"),
                     "errors_sent": radio.get("ErrorsSent"),
                     "errors_received": radio.get("ErrorsReceived"),
-                    "bytes_sent": radio.get("X_TP_BytesSent"),
                     "bytes_received": radio.get("BytesReceived"),
-                    "congestion_rate": radio.get("X_TP_Congestion_Rate"),
-                    "associated_device_number_of_entries": radio.get("X_TP_AssociatedDeviceNumberOfEntries"),
                     "backhaul_sta_mac_address": radio["BackhaulSta"]["MACAddress"] if "BackhaulSta" in radio else None,
                     "backhaul_sta_backhaul_link_type": radio["BackhaulSta"]["X_TP_BackhaulLinkType"] if "BackhaulSta" in radio else None,
                     "backhaul_sta_link_rate": radio["BackhaulSta"]["X_TP_LinkRate"] if "BackhaulSta" in radio else None,
@@ -182,6 +184,7 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
             for assoc_device_id, assoc_device in device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}).items():
                 result.append({
                     "controller_id": controller_id,
+                    "collection_time": collection_time,
                     "ap_device_id": assoc_device.get("APDeviceID"),
                     "mac_address": assoc_device.get("MACAddress"),
                     "ip_address": assoc_device.get("IPAddress"),
@@ -226,7 +229,7 @@ extract_udf = udf(extract_qoe, schema)
 # 读取文件
 file_paths = []
 for file_name in os.listdir(input_path):
-    if file_name.startswith("messages-1722327915384.txt") and file_name.endswith(".txt"):
+    if file_name.startswith("messages-") and file_name.endswith(".txt"):
         file_paths.append(os.path.join(input_path, file_name))
 
 if not file_paths:
@@ -270,20 +273,22 @@ parse_ap_data_udf = udf(lambda device_data_str, collection_time, controller_id: 
     StructField("wifi_availability_score", StringType(), True),
     StructField("noise", StringType(), True),
     StructField("utilization", StringType(), True),
+    StructField("transmit", StringType(), True),
+    StructField("receive_self", StringType(), True),
+    StructField("receive_other", StringType(), True),
+    StructField("congestion_rate", StringType(), True),
+    StructField("associated_device_number_of_entries", StringType(), True),
     StructField("average_rx_rate", StringType(), True),
     StructField("average_tx_rate", StringType(), True),
     StructField("bandwidth", StringType(), True),
+    StructField("bytes_sent", StringType(), True),
     StructField("errors_pkt", StringType(), True),
     StructField("ip_address", StringType(), True),
-    StructField("signal_strength", StringType(), True),
-    StructField("packets_sent", StringType(), True),
     StructField("packets_received", StringType(), True),
+    StructField("packets_sent", StringType(), True),
     StructField("errors_sent", StringType(), True),
     StructField("errors_received", StringType(), True),
-    StructField("bytes_sent", StringType(), True),
     StructField("bytes_received", StringType(), True),
-    StructField("congestion_rate", StringType(), True),
-    StructField("associated_device_number_of_entries", StringType(), True),
     StructField("backhaul_sta_mac_address", StringType(), True),
     StructField("backhaul_sta_backhaul_link_type", StringType(), True),
     StructField("backhaul_sta_link_rate", StringType(), True),
@@ -339,6 +344,7 @@ df_client_split = df_client_data.withColumn(
 df_multiap_data = df_qoe_kind.filter(df_qoe_kind.qoe_type == "CLIENT_DATA")
 parse_multiap_data_udf = udf(lambda multiap_data_str, collection_time, controller_id: parse_multiap_data(multiap_data_str, collection_time, controller_id), ArrayType(StructType([
     StructField("controller_id", StringType(), True),
+    StructField("collection_time", StringType(), True),
     StructField("ap_device_id", StringType(), True),
     StructField("mac_address", StringType(), True),
     StructField("ip_address", StringType(), True),
