@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, explode, udf
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType
 import json
 import os
 
@@ -32,12 +32,13 @@ def extract_qoe(json_str):
         results = []
         for report in reports:
             collection_time = report['CollectionTime']
+            controller_id = report['Device']['WiFi']['DataElements']['Network']['ControllerID']
             device_data_list = report['Device']['WiFi']['DataElements']['Network']['Device']
             results.append({
-                "qoeType": qoe_type,
-                "collectionTime": str(collection_time),
-                "deviceDataList": json.dumps(device_data_list),
-                "rawData": replaced_str
+                "qoe_type": qoe_type,
+                "collection_time": str(collection_time),
+                "controller_id": controller_id,
+                "device_data_list": json.dumps(device_data_list)
             })
 
         return results
@@ -45,83 +46,125 @@ def extract_qoe(json_str):
         raise ValueError(f"Error parsing JSON: {e}")
 
 # 定义解析 AP_DATA 数据的函数
-def parse_ap_data(device_data_str, collection_time):
+def parse_ap_data(device_data_str, collection_time, controller_id):
     try:
         device_data_list = json.loads(device_data_str)
         result = []
         for device_id, device in device_data_list.items():
+            device_id = device.get("ID", device_id)  # 确保使用正确的12位ID
+            qoe = device.get("X_TP_QoE", {})
+            factor = qoe.get("Factor", {})
+            common_data = {
+                "controller_id": controller_id,
+                "device_id": device_id,
+                "collection_time": collection_time,
+                "jitter": qoe.get("Jitter"),
+                "latency": qoe.get("Latency"),
+                "wan_bandwidth": qoe.get("WANBandwidth"),
+                "upload_bandwidth": qoe.get("UploadBandwidth"),
+                "wan_connectivity": qoe.get("WANConnectivity"),
+                "wan_throughput": qoe.get("WANThroughput"),
+                "memory_free": qoe.get("MemoryFree"),
+                "memory_total": qoe.get("MemoryTotal"),
+                "cpu_usage": qoe.get("CPUUsage"),
+                "number_of_alerts": factor.get("NumberOfAlerts"),
+                "is_controller": factor.get("IsController"),
+                "connectivity_score": factor.get("ConnectivityScore"),
+                "available_bandwidth_score": factor.get("AvailableBandwidthScore"),
+                "internet_delay_score": factor.get("InternetDelayScore"),
+                "internet_jitter_score": factor.get("InternetJitterScore"),
+                "system_health_score": factor.get("SystemHealthScore"),
+                "congestion_score": factor.get("CongestionScore")
+            }
+
             for radio_id, radio in device.get('Radio', {}).items():
-                result.append({
-                    "mainDeviceId": device_id,
-                    "radioId": radio_id,
-                    "band": radio.get("X_TP_Band"),
-                    "collectionTime": collection_time,
+                band = radio.get("X_TP_Band")
+                radio_data = common_data.copy()
+                radio_data.update({
+                    "band": band,
                     "noise": radio.get("Noise"),
                     "utilization": radio.get("Utilization"),
-                    "averageRxRate": radio.get("X_TP_AverageRxRate"),
-                    "averageTxRate": radio.get("X_TP_AverageTxRate"),
-                    "bandWidth": radio.get("X_TP_Bandwidth"),
-                    "errorsPkt": radio.get("X_TP_ErrorsPkt"),
-                    "ipAddress": radio.get("X_TP_IPAddress"),
-                    "signalStrength": radio.get("X_TP_SignalStrength"),
-                    "packetsSent": radio.get("X_TP_PacketsSent"),
-                    "packetsReceived": radio.get("X_TP_PacketsReceived"),
-                    "errorsSent": radio.get("ErrorsSent"),
-                    "errorsReceived": radio.get("ErrorsReceived"),
-                    "bytesSent": radio.get("X_TP_BytesSent"),
-                    "bytesReceived": radio.get("BytesReceived"),
-                    "congestionRate": radio.get("X_TP_Congestion_Rate"),
-                    "associatedDeviceNumberOfEntries": radio.get("X_TP_AssociatedDeviceNumberOfEntries"),
-                    "backhaulSta_macAddress": radio["BackhaulSta"]["MACAddress"] if "BackhaulSta" in radio else None,
-                    "backhaulSta_backhaulLinkType": radio["BackhaulSta"]["X_TP_BackhaulLinkType"] if "BackhaulSta" in radio else None,
-                    "backhaulSta_linkRate": radio["BackhaulSta"]["X_TP_LinkRate"] if "BackhaulSta" in radio else None,
-                    "backhaulSta_signalStrength": radio["BackhaulSta"]["X_TP_SignalStrength"] if "BackhaulSta" in radio else None,
-                    "backhaulSta_utilization": radio["BackhaulSta"]["X_TP_Utilization"] if "BackhaulSta" in radio else None,
-                    # "backhaulSta_snr": radio["BackhaulSta"]["X_TP_SNR"] if "BackhaulSta" in radio else None
+                    "average_rx_rate": radio.get("X_TP_AverageRxRate"),
+                    "average_tx_rate": radio.get("X_TP_AverageTxRate"),
+                    "bandwidth": radio.get("X_TP_Bandwidth"),
+                    "errors_pkt": radio.get("X_TP_ErrorsPkt"),
+                    "ip_address": radio.get("X_TP_IPAddress"),
+                    "signal_strength": radio.get("X_TP_SignalStrength"),
+                    "packets_sent": radio.get("X_TP_PacketsSent"),
+                    "packets_received": radio.get("X_TP_PacketsReceived"),
+                    "errors_sent": radio.get("ErrorsSent"),
+                    "errors_received": radio.get("ErrorsReceived"),
+                    "bytes_sent": radio.get("X_TP_BytesSent"),
+                    "bytes_received": radio.get("BytesReceived"),
+                    "congestion_rate": radio.get("X_TP_Congestion_Rate"),
+                    "associated_device_number_of_entries": radio.get("X_TP_AssociatedDeviceNumberOfEntries"),
+                    "backhaul_sta_mac_address": radio["BackhaulSta"]["MACAddress"] if "BackhaulSta" in radio else None,
+                    "backhaul_sta_backhaul_link_type": radio["BackhaulSta"]["X_TP_BackhaulLinkType"] if "BackhaulSta" in radio else None,
+                    "backhaul_sta_link_rate": radio["BackhaulSta"]["X_TP_LinkRate"] if "BackhaulSta" in radio else None,
+                    "backhaul_sta_signal_strength": radio["BackhaulSta"]["X_TP_SignalStrength"] if "BackhaulSta" in radio else None,
+                    "backhaul_sta_utilization": radio["BackhaulSta"]["X_TP_Utilization"] if "BackhaulSta" in radio else None
                 })
+                if band == "2.4GHz":
+                    radio_data.update({
+                        "wifi_coverage_score": factor.get("WiFiCoverage2GScore"),
+                        "wifi_availability_score": factor.get("WiFiAvailability2GScore")
+                    })
+                elif band == "5GHz":
+                    radio_data.update({
+                        "wifi_coverage_score": factor.get("WiFiCoverage5GScore"),
+                        "wifi_availability_score": factor.get("WiFiAvailability5GScore")
+                    })
+                elif band == "6GHz":
+                    radio_data.update({
+                        "wifi_coverage_score": factor.get("WiFiCoverage6GScore"),
+                        "wifi_availability_score": factor.get("WiFiAvailability6GScore")
+                    })
+                result.append(radio_data)
         return result
     except Exception as e:
         print(f"Error parsing AP_DATA: {e}, data: {device_data_str}")
         raise
 
 # 定义解析 CLIENT_DATA 数据的函数
-def parse_client_data(device_data_str, collection_time):
+def parse_client_data(device_data_str, collection_time, controller_id):
     try:
         device_data_list = json.loads(device_data_str)
         result = []
         for device_id, device in device_data_list.items():
+            device_id = device.get("ID", device_id)  # 确保使用正确的12位ID
             for radio_id, radio in device.get('Radio', {}).items():
                 for bss_id, bss in radio.get('BSS', {}).items():
                     for sta_id, sta in bss.get('STA', {}).items():
                         factor = sta.get("X_TP_QoE", {}).get("Factor", {})
                         result.append({
-                            "mainDeviceId": device_id,
-                            "radioId": radio_id,
-                            "bssId": bss_id,
-                            "staId": sta_id,
+                            "controller_id": controller_id,
+                            "device_id": device_id,
+                            "radio_id": radio_id,
+                            "bss_id": bss_id,
+                            "sta_id": sta_id,
                             "band": radio.get("X_TP_Band"),
-                            "collectionTime": collection_time,
-                            "lastDataDownlinkRate": sta.get("LastDataDownlinkRate"),
-                            "lastDataUplinkRate": sta.get("LastDataUplinkRate"),
-                            "macAddress": sta.get("MACAddress"),
-                            "signalStrength": sta.get("SignalStrength"),
-                            "hostName": sta.get("X_TP_HostName"),
-                            "ipAddress": sta.get("X_TP_IPAddress"),
-                            "networkReadyTime": sta.get("X_TP_QoE", {}).get("NetworkReadyTime"),
-                            "wifiConnectivity": sta.get("X_TP_QoE", {}).get("WiFiConnectivity"),
-                            "numberOfAlerts": factor.get("NumberOfAlerts"),
-                            "availableWifiServiceQualityScore": factor.get("AvailableWiFiServiceQualityScore"),
-                            "networkReadyTimeScore": factor.get("NetworkReadyTimeScore"),
-                            "signalStrengthScore": factor.get("SignalStrengthScore"),
-                            "wifiConnectivityScore": factor.get("WiFiConnectivityScore"),
-                            "wifiProtocolScore": factor.get("WiFiProtocolScore"),
-                            "clientHealthScore": factor.get("ClientHealthScore"),
-                            "rxRate": sta.get("X_TP_RxRate"),
-                            "txRate": sta.get("X_TP_TxRate"),
-                            "retransCount": sta.get("RetransCount"),
-                            "estMACDataRateDownlink": sta.get("EstMACDataRateDownlink"),
-                            "estMACDataRateUplink": sta.get("EstMACDataRateUplink"),
-                            "failNum": sta.get("X_TP_FailNum")
+                            "collection_time": collection_time,
+                            "last_data_downlink_rate": sta.get("LastDataDownlinkRate"),
+                            "last_data_uplink_rate": sta.get("LastDataUplinkRate"),
+                            "mac_address": sta.get("MACAddress"),
+                            "signal_strength": sta.get("SignalStrength"),
+                            "host_name": sta.get("X_TP_HostName"),
+                            "ip_address": sta.get("X_TP_IPAddress"),
+                            "network_ready_time": sta.get("X_TP_QoE", {}).get("NetworkReadyTime"),
+                            "wifi_connectivity": sta.get("X_TP_QoE", {}).get("WiFiConnectivity"),
+                            "number_of_alerts": factor.get("NumberOfAlerts"),
+                            "available_wifi_service_quality_score": factor.get("AvailableWiFiServiceQualityScore"),
+                            "network_ready_time_score": factor.get("NetworkReadyTimeScore"),
+                            "signal_strength_score": factor.get("SignalStrengthScore"),
+                            "wifi_connectivity_score": factor.get("WiFiConnectivityScore"),
+                            "wifi_protocol_score": factor.get("WiFiProtocolScore"),
+                            "client_health_score": factor.get("ClientHealthScore"),
+                            "rx_rate": sta.get("X_TP_RxRate"),
+                            "tx_rate": sta.get("X_TP_TxRate"),
+                            "retrans_count": sta.get("RetransCount"),
+                            "est_mac_data_rate_downlink": sta.get("EstMACDataRateDownlink"),
+                            "est_mac_data_rate_uplink": sta.get("EstMACDataRateUplink"),
+                            "fail_num": sta.get("X_TP_FailNum")
                         })
         return result
     except Exception as e:
@@ -139,10 +182,10 @@ input_path = '/Users/sunhao/s3'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
-    StructField("qoeType", StringType(), True),
-    StructField("collectionTime", StringType(), True),
-    StructField("deviceDataList", StringType(), True),
-    StructField("rawData", StringType(), True)  # 存储原始数据
+    StructField("qoe_type", StringType(), True),
+    StructField("collection_time", StringType(), True),
+    StructField("controller_id", StringType(), True),
+    StructField("device_data_list", StringType(), True)
 ]))
 
 # 注册 UDF
@@ -166,81 +209,96 @@ df_qoe_kind = df.withColumn("Qoe", explode(extract_udf(col("value")))).select(co
 # 显示结果
 df_qoe_kind.show(truncate=False)
 
-# 存储原始报告数据到 report.csv
-output_path_report = os.path.join(input_path, 'report.csv')
-df_qoe_kind.select("rawData").coalesce(1).write.csv(output_path_report, mode='overwrite', header=True)
-
 # 解析 AP_DATA 数据
-df_ap_data = df_qoe_kind.filter(df_qoe_kind.qoeType == "AP_DATA")
-parse_ap_data_udf = udf(lambda device_data_str, collection_time: parse_ap_data(device_data_str, collection_time), ArrayType(StructType([
-    StructField("mainDeviceId", StringType(), True),
-    StructField("radioId", StringType(), True),
+df_ap_data = df_qoe_kind.filter(df_qoe_kind.qoe_type == "AP_DATA")
+parse_ap_data_udf = udf(lambda device_data_str, collection_time, controller_id: parse_ap_data(device_data_str, collection_time, controller_id), ArrayType(StructType([
+    StructField("controller_id", StringType(), True),
+    StructField("device_id", StringType(), True),
     StructField("band", StringType(), True),
-    StructField("collectionTime", StringType(), True),
+    StructField("collection_time", StringType(), True),
+    StructField("jitter", StringType(), True),
+    StructField("latency", StringType(), True),
+    StructField("wan_bandwidth", StringType(), True),
+    StructField("upload_bandwidth", StringType(), True),
+    StructField("wan_connectivity", StringType(), True),
+    StructField("wan_throughput", StringType(), True),
+    StructField("memory_free", StringType(), True),
+    StructField("memory_total", StringType(), True),
+    StructField("cpu_usage", StringType(), True),
+    StructField("number_of_alerts", StringType(), True),
+    StructField("is_controller", StringType(), True),
+    StructField("connectivity_score", StringType(), True),
+    StructField("available_bandwidth_score", StringType(), True),
+    StructField("internet_delay_score", StringType(), True),
+    StructField("internet_jitter_score", StringType(), True),
+    StructField("system_health_score", StringType(), True),
+    StructField("congestion_score", StringType(), True),
+    StructField("wifi_coverage_score", StringType(), True),
+    StructField("wifi_availability_score", StringType(), True),
     StructField("noise", StringType(), True),
     StructField("utilization", StringType(), True),
-    StructField("averageRxRate", StringType(), True),
-    StructField("averageTxRate", StringType(), True),
-    StructField("bandWidth", StringType(), True),
-    StructField("errorsPkt", StringType(), True),
-    StructField("ipAddress", StringType(), True),
-    StructField("signalStrength", StringType(), True),
-    StructField("packetsSent", StringType(), True),
-    StructField("packetsReceived", StringType(), True),
-    StructField("errorsSent", StringType(), True),
-    StructField("errorsReceived", StringType(), True),
-    StructField("bytesSent", StringType(), True),
-    StructField("bytesReceived", StringType(), True),
-    StructField("congestionRate", StringType(), True),
-    StructField("associatedDeviceNumberOfEntries", StringType(), True),
-    StructField("backhaulSta_macAddress", StringType(), True),
-    StructField("backhaulSta_backhaulLinkType", StringType(), True),
-    StructField("backhaulSta_linkRate", StringType(), True),
-    StructField("backhaulSta_signalStrength", StringType(), True),
-    StructField("backhaulSta_utilization", StringType(), True),
-    # StructField("backhaulSta_snr", StringType(), True)
+    StructField("average_rx_rate", StringType(), True),
+    StructField("average_tx_rate", StringType(), True),
+    StructField("bandwidth", StringType(), True),
+    StructField("errors_pkt", StringType(), True),
+    StructField("ip_address", StringType(), True),
+    StructField("signal_strength", StringType(), True),
+    StructField("packets_sent", StringType(), True),
+    StructField("packets_received", StringType(), True),
+    StructField("errors_sent", StringType(), True),
+    StructField("errors_received", StringType(), True),
+    StructField("bytes_sent", StringType(), True),
+    StructField("bytes_received", StringType(), True),
+    StructField("congestion_rate", StringType(), True),
+    StructField("associated_device_number_of_entries", StringType(), True),
+    StructField("backhaul_sta_mac_address", StringType(), True),
+    StructField("backhaul_sta_backhaul_link_type", StringType(), True),
+    StructField("backhaul_sta_link_rate", StringType(), True),
+    StructField("backhaul_sta_signal_strength", StringType(), True),
+    StructField("backhaul_sta_utilization", StringType(), True)
 ])))
 
 df_ap_split = df_ap_data.withColumn(
     "parsed_data",
-    explode(parse_ap_data_udf(col("deviceDataList"), col("collectionTime")))
+    explode(parse_ap_data_udf(col("device_data_list"), col("collection_time"), col("controller_id")))
 ).select("parsed_data.*")
 
 # 解析 CLIENT_DATA 数据
-df_client_data = df_qoe_kind.filter(df_qoe_kind.qoeType == "CLIENT_DATA")
-parse_client_data_udf = udf(lambda device_data_str, collection_time: parse_client_data(device_data_str, collection_time), ArrayType(StructType([
-    StructField("mainDeviceId", StringType(), True),
-    StructField("radioId", StringType(), True),
-    StructField("bssId", StringType(), True),
-    StructField("staId", StringType(), True),
+df_client_data = df_qoe_kind.filter(df_qoe_kind.qoe_type == "CLIENT_DATA")
+parse_client_data_udf = udf(lambda device_data_str, collection_time, controller_id: parse_client_data(device_data_str, collection_time, controller_id), ArrayType(StructType([
+    StructField("controller_id", StringType(), True),
+    StructField("device_id", StringType(), True),
+    StructField("radio_id", StringType(), True),
+    StructField("bss_id", StringType(), True),
+    StructField("sta_id", StringType(), True),
     StructField("band", StringType(), True),
-    StructField("collectionTime", StringType(), True),
-    StructField("lastDataDownlinkRate", StringType(), True),
-    StructField("lastDataUplinkRate", StringType(), True),
-    StructField("macAddress", StringType(), True),
-    StructField("signalStrength", StringType(), True),
-    StructField("hostName", StringType(), True),
-    StructField("ipAddress", StringType(), True),
-    StructField("networkReadyTime", StringType(), True),
-    StructField("wifiConnectivity", StringType(), True),
-    StructField("numberOfAlerts", StringType(), True),
-    StructField("availableWifiServiceQualityScore", StringType(), True),
-    StructField("networkReadyTimeScore", StringType(), True),
-    StructField("signalStrengthScore", StringType(), True),
-    StructField("wifiConnectivityScore", StringType(), True),
-    StructField("wifiProtocolScore", StringType(), True),
-    StructField("clientHealthScore", StringType(), True),
-    StructField("rxRate", StringType(), True),
-    StructField("txRate", StringType(), True),
-    StructField("retransCount", StringType(), True),
-    StructField("estMACDataRateDownlink", StringType(), True),
-    StructField("estMACDataRateUplink", StringType(), True),
-    StructField("failNum", StringType(), True)
+    StructField("collection_time", StringType(), True),
+    StructField("last_data_downlink_rate", StringType(), True),
+    StructField("last_data_uplink_rate", StringType(), True),
+    StructField("mac_address", StringType(), True),
+    StructField("signal_strength", StringType(), True),
+    StructField("host_name", StringType(), True),
+    StructField("ip_address", StringType(), True),
+    StructField("network_ready_time", StringType(), True),
+    StructField("wifi_connectivity", StringType(), True),
+    StructField("number_of_alerts", StringType(), True),
+    StructField("available_wifi_service_quality_score", StringType(), True),
+    StructField("network_ready_time_score", StringType(), True),
+    StructField("signal_strength_score", StringType(), True),
+    StructField("wifi_connectivity_score", StringType(), True),
+    StructField("wifi_protocol_score", StringType(), True),
+    StructField("client_health_score", StringType(), True),
+    StructField("rx_rate", StringType(), True),
+    StructField("tx_rate", StringType(), True),
+    StructField("retrans_count", StringType(), True),
+    StructField("est_mac_data_rate_downlink", StringType(), True),
+    StructField("est_mac_data_rate_uplink", StringType(), True),
+    StructField("fail_num", StringType(), True)
 ])))
 
 df_client_split = df_client_data.withColumn(
     "parsed_data",
-    explode(parse_client_data_udf(col("deviceDataList"), col("collectionTime")))
+    explode(parse_client_data_udf(col("device_data_list"), col("collection_time"), col("controller_id")))
 ).select("parsed_data.*")
 
 # 存储 AP_DATA 处理后的数据到 ap_data.csv
