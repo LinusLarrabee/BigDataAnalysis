@@ -17,28 +17,30 @@ def extract_qoe(json_str):
         if type_start == -1 or type_end == -1:
             return "string format error! str= " + replaced_str
 
-
-        qoe_type = replaced_str[type_start + 14:type_end]  # Ensure the substring is complete
-
+        qoe_type = replaced_str[type_start + 14:type_end]  # 确保子字符串完整
 
         # 查找Qoe内容
         data_start = type_end
         data_end = replaced_str.find('","timeStamp')
-        if type_start == -1 or type_end == -1:
+        if data_start == -1 or data_end == -1:
             return "string format error! str= " + replaced_str
         qoe_data = replaced_str[data_start + 13:data_end]
 
-
         qoe_json = json.loads(qoe_data)
-        collection_time = qoe_json['Report'][0]['CollectionTime']
-        device_data_list = qoe_json['Report'][0]['Device']['WiFi']['DataElements']['Network']['Device']
+        reports = qoe_json['Report']
 
-        return {
-            "qoeType": qoe_type,
-            "collectionTime": str(collection_time),
-            "deviceDataList": json.dumps(device_data_list),
-            "rawData": replaced_str
-        }
+        results = []
+        for report in reports:
+            collection_time = report['CollectionTime']
+            device_data_list = report['Device']['WiFi']['DataElements']['Network']['Device']
+            results.append({
+                "qoeType": qoe_type,
+                "collectionTime": str(collection_time),
+                "deviceDataList": json.dumps(device_data_list),
+                "rawData": replaced_str
+            })
+
+        return results
     except Exception as e:
         raise ValueError(f"Error parsing JSON: {e}")
 
@@ -75,7 +77,7 @@ def parse_ap_data(device_data_str, collection_time):
                     "backhaulSta_linkRate": radio["BackhaulSta"]["X_TP_LinkRate"] if "BackhaulSta" in radio else None,
                     "backhaulSta_signalStrength": radio["BackhaulSta"]["X_TP_SignalStrength"] if "BackhaulSta" in radio else None,
                     "backhaulSta_utilization": radio["BackhaulSta"]["X_TP_Utilization"] if "BackhaulSta" in radio else None,
-                    "backhaulSta_snr": radio["BackhaulSta"]["X_TP_SNR"] if "BackhaulSta" in radio else None
+                    # "backhaulSta_snr": radio["BackhaulSta"]["X_TP_SNR"] if "BackhaulSta" in radio else None
                 })
         return result
     except Exception as e:
@@ -136,12 +138,12 @@ spark = SparkSession.builder \
 input_path = '/Users/sunhao/s3'  # 输入路径
 
 # 定义 UDF 返回的 schema
-schema = StructType([
+schema = ArrayType(StructType([
     StructField("qoeType", StringType(), True),
     StructField("collectionTime", StringType(), True),
     StructField("deviceDataList", StringType(), True),
     StructField("rawData", StringType(), True)  # 存储原始数据
-])
+]))
 
 # 注册 UDF
 extract_udf = udf(extract_qoe, schema)
@@ -159,7 +161,7 @@ if not file_paths:
 df = spark.read.text(file_paths)
 
 # 应用 UDF 提取 QoeType 和 QoeData 部分，并展开为单独的列
-df_qoe_kind = df.withColumn("Qoe", extract_udf(col("value"))).select(col("Qoe.*"))
+df_qoe_kind = df.withColumn("Qoe", explode(extract_udf(col("value")))).select(col("Qoe.*"))
 
 # 显示结果
 df_qoe_kind.show(truncate=False)
@@ -196,7 +198,7 @@ parse_ap_data_udf = udf(lambda device_data_str, collection_time: parse_ap_data(d
     StructField("backhaulSta_linkRate", StringType(), True),
     StructField("backhaulSta_signalStrength", StringType(), True),
     StructField("backhaulSta_utilization", StringType(), True),
-    StructField("backhaulSta_snr", StringType(), True)
+    # StructField("backhaulSta_snr", StringType(), True)
 ])))
 
 df_ap_split = df_ap_data.withColumn(
