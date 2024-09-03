@@ -212,7 +212,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 指定读取文件路径
-input_path = '/Users/sunhao/s3'  # 输入路径
+input_path = '/Users/sunhao/prd'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -226,17 +226,42 @@ schema = ArrayType(StructType([
 # 注册 UDF
 extract_udf = udf(extract_qoe, schema)
 
-# 读取文件
+import os
+import gzip
+
 file_paths = []
 for file_name in os.listdir(input_path):
-    if file_name.startswith("messages-") and file_name.endswith(".txt"):
+    if file_name.startswith("messages-") and file_name.endswith(".txt.gz"):
         file_paths.append(os.path.join(input_path, file_name))
 
 if not file_paths:
     raise FileNotFoundError(f"No files found in the directory: {input_path}")
 
-# 创建一个空的 DataFrame
-df = spark.read.text(file_paths)
+# 读取并解压缩文件内容，只保留偶数行，并打印前十个偶数行
+even_lines = []
+for file_path in file_paths:
+    with gzip.open(file_path, 'rt') as f:  # 'rt' 模式表示以文本形式读取
+        for i, line in enumerate(f, 1):  # enumerate 从 1 开始计数
+            if i % 2 == 0:  # 偶数行
+                even_lines.append(line.strip())
+                if len(even_lines) == 10:  # 只取前十个偶数行
+                    break
+    if len(even_lines) == 10:
+        break
+
+# 打印前十个偶数行
+for line in even_lines:
+    print(line)
+
+
+
+from pyspark.sql import Row
+
+# 将偶数行转换为 Row 对象列表
+rows = [Row(value=line) for line in even_lines]
+
+# 创建 DataFrame
+df = spark.createDataFrame(rows)
 
 # 应用 UDF 提取 QoeType 和 QoeData 部分，并展开为单独的列
 df_qoe_kind = df.withColumn("Qoe", explode(extract_udf(col("value")))).select(col("Qoe.*"))
@@ -366,17 +391,18 @@ df_multiap_split = df_multiap_data.withColumn(
     explode(parse_multiap_data_udf(col("multiap_data_list"), col("collection_time"), col("controller_id")))
 ).select("parsed_data.*")
 
-# 存储 AP_DATA 处理后的数据到 ap_data.csv
-output_path_ap = os.path.join(input_path, 'ap_data.csv')  # 输出文件路径
-df_ap_split.coalesce(1).write.csv(output_path_ap, mode='overwrite', header=True)
 
-# 存储 CLIENT_DATA 处理后的数据到 client_data.csv
-output_path_client = os.path.join(input_path, 'client_data.csv')  # 输出文件路径
-df_client_split.coalesce(1).write.csv(output_path_client, mode='overwrite', header=True)
+# 存储 AP_DATA 处理后的数据到 Parquet 格式
+output_path_ap = os.path.join(input_path, 'ap_data.parquet')  # 输出文件路径
+df_ap_split.coalesce(1).write.mode('overwrite').parquet(output_path_ap, compression='snappy')
 
-# 存储 MULTIAP 数据到 multiap_data.csv
-output_path_multiap = os.path.join(input_path, 'multiap_data.csv')  # 输出文件路径
-df_multiap_split.coalesce(1).write.csv(output_path_multiap, mode='overwrite', header=True)
+# 存储 CLIENT_DATA 处理后的数据到 Parquet 格式
+output_path_client = os.path.join(input_path, 'client_data.parquet')  # 输出文件路径
+df_client_split.coalesce(1).write.mode('overwrite').parquet(output_path_client, compression='snappy')
+
+# 存储 MULTIAP 数据到 Parquet 格式
+output_path_multiap = os.path.join(input_path, 'multiap_data.parquet')  # 输出文件路径
+df_multiap_split.coalesce(1).write.mode('overwrite').parquet(output_path_multiap, compression='snappy')
 
 # 停止SparkSession
 spark.stop()
