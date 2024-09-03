@@ -3,8 +3,10 @@ from pyspark.sql import Row
 from pyspark.sql.functions import col, explode, udf
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType
 import json
-import os
 import gzip
+import sys
+from pyspark import SparkContext
+
 
 # 定义解析 JSON 数据的函数
 def extract_qoe(json_str):
@@ -208,13 +210,14 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
         raise
 
 # 初始化SparkSession
+sc = SparkContext(appName="ReadLocalJSONFiles")
 spark = SparkSession.builder \
-    .appName("ReadLocalJSONFiles") \
+    .appName(sc.appName) \
     .config("spark.sql.debug.maxToStringFields", "1000") \
     .getOrCreate()
 
 # 指定读取文件路径
-input_path = '/Users/sunhao/prd'  # 输入路径
+input_path = 's3a://aps1-tauc-data-analysis/aaa/'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -228,29 +231,53 @@ schema = ArrayType(StructType([
 # 注册 UDF
 extract_udf = udf(extract_qoe, schema)
 
-file_paths = []
-for file_name in os.listdir(input_path):
-    if file_name.startswith("messages-") and file_name.endswith(".txt.gz"):
-        file_paths.append(os.path.join(input_path, file_name))
 
-if not file_paths:
-    raise FileNotFoundError(f"No files found in the directory: {input_path}")
+# 配置 S3 bucket 和路径
+bucket = 'aps1-tauc-data-analysis'
+# 获取输入参数
+start_date = sys.argv[1]  # 起始日期
+end_date = sys.argv[2]    # 结束日期
 
-# 读取并解压缩文件内容，只保留偶数行，并打印前十个偶数行
-even_lines = []
-for file_path in file_paths:
-    with gzip.open(file_path, 'rt') as f:  # 'rt' 模式表示以文本形式读取
-        for i, line in enumerate(f, 1):  # enumerate 从 1 开始计数
-            if i % 2 == 0:  # 偶数行
-                even_lines.append(line.strip())
-                if len(even_lines) == 10:  # 只取前十个偶数行
-                    break
-    if len(even_lines) == 10:
-        break
+# 生成日期范围并读取数据
+from datetime import datetime, timedelta
+def generate_date_range(start_date, end_date):
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    delta = timedelta(days=1)
+    current = start
+    while current <= end:
+        yield current.strftime("%Y/%m/%d")
+        current += delta
 
-# 打印前十个偶数行
-for line in even_lines:
-    print(line)
+df = spark.createDataFrame([], StringType()).toDF("value")  # 初始化空的 DataFrame
+
+for date_str in generate_date_range(start_date, end_date):
+    # input_path = f's3a://{bucket}/local/uat/use1/{date_str}/messages-*.txt.gz'
+    input_path = 's3://aps1-tauc-data-analysis/aaa/'
+    try:
+        # 读取 S3 上的文件内容并解压，只保留偶数行
+        even_lines = []
+        file_rdd = sc.textFile(input_path)
+        for file_path in file_rdd.collect():
+            with gzip.open(file_path, 'rt') as f:  # 'rt' 模式表示以文本形式读取
+                for i, line in enumerate(f, 1):  # enumerate 从 1 开始计数
+                    if i % 2 == 0:  # 偶数行
+                        even_lines.append(line.strip())
+                        if len(even_lines) == 10:  # 只取前十个偶数行
+                            break
+            if len(even_lines) == 10:
+                break
+
+        # 将偶数行转换为 DataFrame
+        json_list = [json.loads(line) for line in even_lines]
+        df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
+
+        # 合并到主 DataFrame
+        df = df.union(df_day)
+
+    except Exception as e:
+        print(f"Path not found or error processing: {input_path}, skipping. Error: {e}")
+
 
 
 # 将偶数行转换为 Row 对象列表
@@ -389,16 +416,17 @@ df_multiap_split = df_multiap_data.withColumn(
 
 
 # 存储 AP_DATA 处理后的数据到 Parquet 格式
-output_path_ap = os.path.join(input_path, 'ap_data.parquet')  # 输出文件路径
+output_path_ap = f's3a://{bucket}/ap_data.parquet'
 df_ap_split.coalesce(1).write.mode('overwrite').parquet(output_path_ap, compression='snappy')
 
 # 存储 CLIENT_DATA 处理后的数据到 Parquet 格式
-output_path_client = os.path.join(input_path, 'client_data.parquet')  # 输出文件路径
+output_path_client = f's3a://{bucket}/client_data.parquet'
 df_client_split.coalesce(1).write.mode('overwrite').parquet(output_path_client, compression='snappy')
 
 # 存储 MULTIAP 数据到 Parquet 格式
-output_path_multiap = os.path.join(input_path, 'multiap_data.parquet')  # 输出文件路径
+output_path_multiap = f's3a://{bucket}/multiap_data.parquet'
 df_multiap_split.coalesce(1).write.mode('overwrite').parquet(output_path_multiap, compression='snappy')
+
 
 # 停止SparkSession
 spark.stop()
