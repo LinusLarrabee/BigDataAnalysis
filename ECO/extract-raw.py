@@ -214,8 +214,8 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 指定读取文件路径
-input_path = '/Users/sunhao/s3/qoe_rawLocal/uat/aps1/2024/07/26'  # 输入路径
-
+input_path = '/Users/sunhao/s3/qoe_rawLocal/souce/qoe-raw/2024/07/30'  # 输入路径
+output_path = '/Users/sunhao/s3/qoe_rawLocal/target'
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
     StructField("qoe_type", StringType(), True),
@@ -228,6 +228,7 @@ schema = ArrayType(StructType([
 # 注册 UDF
 extract_udf = udf(extract_qoe, schema)
 
+# 筛选符合条件的文件
 file_paths = []
 for file_name in os.listdir(input_path):
     if file_name.startswith("messages-") and file_name.endswith(".txt.gz"):
