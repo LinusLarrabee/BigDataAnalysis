@@ -253,38 +253,15 @@ df = spark.createDataFrame([], StringType()).toDF("value")  # 初始化空的 Da
 
 for date_str in generate_date_range(start_date, end_date):
     # input_path = f's3a://{bucket}/local/uat/use1/{date_str}/messages-*.txt.gz'
-    input_path = 's3://aps1-tauc-data-analysis/aaa/'
+    input_path = f's3://{bucket}/aaa/messages-*.txt.gz'
     try:
-        # 读取 S3 上的文件内容并解压，只保留偶数行
-        even_lines = []
         file_rdd = sc.textFile(input_path)
-        for file_path in file_rdd.collect():
-            with gzip.open(file_path, 'rt') as f:  # 'rt' 模式表示以文本形式读取
-                for i, line in enumerate(f, 1):  # enumerate 从 1 开始计数
-                    if i % 2 == 0:  # 偶数行
-                        even_lines.append(line.strip())
-                        if len(even_lines) == 10:  # 只取前十个偶数行
-                            break
-            if len(even_lines) == 10:
-                break
-
-        # 将偶数行转换为 DataFrame
-        json_list = [json.loads(line) for line in even_lines]
+        json_list = file_rdd.map(lambda x: json.loads(x)).collect()
         df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
-
-        # 合并到主 DataFrame
         df = df.union(df_day)
 
     except Exception as e:
         print(f"Path not found or error processing: {input_path}, skipping. Error: {e}")
-
-
-
-# 将偶数行转换为 Row 对象列表
-rows = [Row(value=line) for line in even_lines]
-
-# 创建 DataFrame
-df = spark.createDataFrame(rows)
 
 # 应用 UDF 提取 QoeType 和 QoeData 部分，并展开为单独的列
 df_qoe_kind = df.withColumn("Qoe", explode(extract_udf(col("value")))).select(col("Qoe.*"))

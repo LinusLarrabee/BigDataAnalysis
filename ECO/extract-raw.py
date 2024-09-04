@@ -214,7 +214,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 指定读取文件路径
-input_path = '/Users/sunhao/prd'  # 输入路径
+input_path = '/Users/sunhao/s3/qoe_rawLocal/uat/aps1/2024/07/26'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -390,15 +390,15 @@ df_multiap_split = df_multiap_data.withColumn(
 
 # 存储 AP_DATA 处理后的数据到 Parquet 格式
 output_path_ap = os.path.join(input_path, 'ap_data.parquet')  # 输出文件路径
-df_ap_split.coalesce(1).write.mode('overwrite').parquet(output_path_ap, compression='snappy')
+df_ap_split.coalesce(1).write.mode('overwrite').parquet(output_path_ap, compression='gzip')
 
 # 存储 CLIENT_DATA 处理后的数据到 Parquet 格式
 output_path_client = os.path.join(input_path, 'client_data.parquet')  # 输出文件路径
-df_client_split.coalesce(1).write.mode('overwrite').parquet(output_path_client, compression='snappy')
+df_client_split.coalesce(1).write.mode('overwrite').parquet(output_path_client, compression='gzip')
 
 # 存储 MULTIAP 数据到 Parquet 格式
 output_path_multiap = os.path.join(input_path, 'multiap_data.parquet')  # 输出文件路径
-df_multiap_split.coalesce(1).write.mode('overwrite').parquet(output_path_multiap, compression='snappy')
+df_multiap_split.coalesce(1).write.mode('overwrite').parquet(output_path_multiap, compression='gzip')
 
 # 停止SparkSession
 spark.stop()
