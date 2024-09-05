@@ -1,18 +1,21 @@
 from pyspark.sql import SparkSession
-from pyspark.sql import Row
-from pyspark.sql.functions import col, explode, udf
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType
-import json
-import gzip
-import sys
-from pyspark import SparkContext
 
+# 创建 SparkSession
+spark = SparkSession.builder \
+    .appName("Read Snappy Parquet") \
+    .getOrCreate()
 
-# 读取 Snappy 压缩的 Parquet 文件
-parquet_df = spark.read.parquet("s3://your-bucket/your-path-to-parquet-file")
+# 读取 Snappy 压缩的 Parquet 文件，文件路径替换为你的本地文件路径
+parquet_file_path = "/Users/sunhao/s3/parquet/part-00000-54acad5f-e1ec-4304-974d-1efe3037c640-c000.snappy.parquet"
 
-# 显示 DataFrame 的前几行
-parquet_df.show(truncate=False)
+# 读取 Parquet 文件
+df = spark.read.parquet(parquet_file_path)
 
-# 打印 DataFrame 的 schema
-parquet_df.printSchema()
+# 展示表结构（Schema）
+df.printSchema()
+
+# 展示前3行数据
+df.show(3, truncate=False)
+
+# 停止 SparkSession
+spark.stop()

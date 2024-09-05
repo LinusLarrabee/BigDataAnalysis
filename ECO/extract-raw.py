@@ -231,7 +231,7 @@ extract_udf = udf(extract_qoe, schema)
 # 筛选符合条件的文件
 file_paths = []
 for file_name in os.listdir(input_path):
-    if file_name.startswith("messages-") and file_name.endswith(".txt.gz"):
+    if file_name.startswith("messages-") and file_name.endswith(".txt"):
         file_paths.append(os.path.join(input_path, file_name))
 
 if not file_paths:

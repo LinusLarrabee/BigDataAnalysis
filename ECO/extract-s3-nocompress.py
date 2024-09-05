@@ -231,8 +231,6 @@ spark = SparkSession.builder \
     .config("spark.sql.debug.maxToStringFields", "1000") \
     .getOrCreate()
 
-# 指定读取文件路径
-input_path = 's3a://aps1-tauc-data-analysis/aaa/'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -270,7 +268,7 @@ def generate_date_range(start_date, end_date):
 df = spark.createDataFrame([], StringType()).toDF("value")  # 初始化空的 DataFrame
 
 for date_str in generate_date_range(start_date, end_date):
-    input_path = f's3://{bucket}/{input_prefix}/{date_str}/messages-*.txt.gz'
+    input_path = f's3://{bucket}/{input_prefix}/{date_str}/messages-*.txt'
     try:
 
         # # 使用Spark列出符合条件的文件（以messages-开头，.txt.gz结尾）
@@ -281,7 +279,7 @@ for date_str in generate_date_range(start_date, end_date):
 
 
         file_rdd = sc.textFile(input_path)
-        json_list = file_rdd.zipWithIndex().filter(lambda x: (x[1] + 1) % 2 == 0).map(lambda x: json.loads(x[0])).collect()
+        json_list = file_rdd.map(lambda x: json.loads(x)).collect()
         df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
         df = df.union(df_day)
 
