@@ -252,7 +252,7 @@ extract_udf = udf(extract_qoe, schema)
 # 获取输入参数
 bucket = sys.argv[1]
 input_prefix = sys.argv[2]
-output_prefex = sys.argv[3]
+output_prefix = sys.argv[3]
 start_date = sys.argv[4]  # 起始日期
 end_date = sys.argv[5]    # 结束日期
 
@@ -418,18 +418,35 @@ df_multiap_split = df_multiap_data.withColumn(
 ).select("parsed_data.*")
 
 
-# 存储 AP_DATA 处理后的数据到 Parquet 格式
-output_path_ap = f's3a://{bucket}/{output_prefex}/ap_data.parquet'
-df_ap_split.coalesce(1).write.mode('overwrite').parquet(output_path_ap, compression='snappy')
+df_multiap_split.show(truncate=False)
+df_client_split.show(truncate=False)
+df_ap_split.show(truncate=False)
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
-# 存储 CLIENT_DATA 处理后的数据到 Parquet 格式
-output_path_client = f's3a://{bucket}/{output_prefex}/client_data.parquet'
-df_client_split.coalesce(1).write.mode('overwrite').parquet(output_path_client, compression='snappy')
+# 通用函数：按日期存储数据，bucket 和 output_prefix 分开传递
+def save_by_date_partitioning(df, table_name, bucket, output_prefix):
+    # 将 collection_time 转换为日期格式 'YYYY-MM-DD'
+    df_with_date = df.withColumn("formatted_date", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd'))
 
-# 存储 MULTIAP 数据到 Parquet 格式
-output_path_multiap = f's3a://{bucket}/{output_prefex}/multiap_data.parquet'
-df_multiap_split.coalesce(1).write.mode('overwrite').parquet(output_path_multiap, compression='snappy')
+    # 获取所有不同的日期
+    distinct_dates = df_with_date.select("formatted_date").distinct().collect()
+
+    # 遍历每个日期进行分区存储
+    for row in distinct_dates:
+        date_str = row["formatted_date"]
+        output_path = f's3a://{bucket}/{output_prefix}/{table_name}/dt={date_str}/'  # 生成带 bucket 和前缀的路径
+
+        # 过滤当前日期的数据并保存
+        df_with_date.filter(df_with_date["formatted_date"] == date_str) \
+            .coalesce(1) \
+            .write.mode('overwrite').parquet(output_path, compression='snappy')
 
 
-# 停止SparkSession
+# 使用新的方式存储 AP_DATA, CLIENT_DATA, MULTIAP 数据
+save_by_date_partitioning(df_ap_split, "ap_data", bucket, output_prefix)
+save_by_date_partitioning(df_client_split, "client_data", bucket, output_prefix)
+save_by_date_partitioning(df_multiap_split, "multiap_data", bucket, output_prefix)
+
+# 停止 SparkSession
 spark.stop()

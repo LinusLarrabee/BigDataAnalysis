@@ -214,7 +214,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 指定读取文件路径
-input_path = '/Users/sunhao/s3/qoe_rawLocal/souce/qoe-raw/2024/07/30'  # 输入路径
+input_path = '/Users/sunhao/s3/qoe_rawLocal/source/qoe-raw/2024/08/01'  # 输入路径
 output_path = '/Users/sunhao/s3/qoe_rawLocal/target'
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -231,7 +231,7 @@ extract_udf = udf(extract_qoe, schema)
 # 筛选符合条件的文件
 file_paths = []
 for file_name in os.listdir(input_path):
-    if file_name.startswith("messages-") and file_name.endswith(".txt"):
+    if file_name.startswith("messages-") and file_name.endswith(".txt.gz"):
         file_paths.append(os.path.join(input_path, file_name))
 
 if not file_paths:
@@ -388,18 +388,33 @@ df_multiap_split = df_multiap_data.withColumn(
     explode(parse_multiap_data_udf(col("multiap_data_list"), col("collection_time"), col("controller_id")))
 ).select("parsed_data.*")
 
+import os
+from pyspark.sql import functions as F
 
-# 存储 AP_DATA 处理后的数据到 Parquet 格式
-output_path_ap = os.path.join(input_path, 'ap_data.parquet')  # 输出文件路径
-df_ap_split.coalesce(1).write.mode('overwrite').parquet(output_path_ap, compression='gzip')
+# 假设 collection_time 是 UNIX 时间戳
+# 提取日期并格式化为 'YYYY-MM-DD'，用于存储时生成路径
+df_ap_split = df_ap_split.withColumn('formatted_date', F.date_format(F.from_unixtime(df_ap_split['collection_time']), 'yyyy-MM-dd'))
+df_client_split = df_client_split.withColumn('formatted_date', F.date_format(F.from_unixtime(df_client_split['collection_time']), 'yyyy-MM-dd'))
+df_multiap_split = df_multiap_split.withColumn('formatted_date', F.date_format(F.from_unixtime(df_multiap_split['collection_time']), 'yyyy-MM-dd'))
 
-# 存储 CLIENT_DATA 处理后的数据到 Parquet 格式
-output_path_client = os.path.join(input_path, 'client_data.parquet')  # 输出文件路径
-df_client_split.coalesce(1).write.mode('overwrite').parquet(output_path_client, compression='gzip')
+# 存储 AP_DATA 处理后的数据到按天分路径的 Parquet 格式，并使用 append 模式进行累加存储
+for date in df_ap_split.select('formatted_date').distinct().collect():
+    output_path_ap = os.path.join(input_path, f'ap_data/{date.formatted_date}/')  # 按日期生成路径
+    df_ap_split.filter(df_ap_split['formatted_date'] == date.formatted_date).coalesce(1) \
+        .write.mode('append').parquet(output_path_ap, compression='snappy')
 
-# 存储 MULTIAP 数据到 Parquet 格式
-output_path_multiap = os.path.join(input_path, 'multiap_data.parquet')  # 输出文件路径
-df_multiap_split.coalesce(1).write.mode('overwrite').parquet(output_path_multiap, compression='gzip')
+# 存储 CLIENT_DATA 处理后的数据到按天分路径的 Parquet 格式，并使用 append 模式进行累加存储
+for date in df_client_split.select('formatted_date').distinct().collect():
+    output_path_client = os.path.join(input_path, f'client_data/{date.formatted_date}/')  # 按日期生成路径
+    df_client_split.filter(df_client_split['formatted_date'] == date.formatted_date).coalesce(1) \
+        .write.mode('append').parquet(output_path_client, compression='snappy')
+
+# 存储 MULTIAP 数据到按天分路径的 Parquet 格式，并使用 append 模式进行累加存储
+for date in df_multiap_split.select('formatted_date').distinct().collect():
+    output_path_multiap = os.path.join(input_path, f'multiap_data/{date.formatted_date}/')  # 按日期生成路径
+    df_multiap_split.filter(df_multiap_split['formatted_date'] == date.formatted_date).coalesce(1) \
+        .write.mode('append').parquet(output_path_multiap, compression='snappy')
+
 
 # 停止SparkSession
 spark.stop()
