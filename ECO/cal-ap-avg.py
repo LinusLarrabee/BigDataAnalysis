@@ -11,7 +11,7 @@ start_date = sys.argv[4]  # 起始日期，格式：YYYY-MM-DD
 end_date = sys.argv[5]    # 结束日期，格式：YYYY-MM-DD
 
 # 创建 SparkSession
-spark = SparkSession.builder.appName("Save Detailed AP and Backhaul Data with Aggregation").getOrCreate()
+spark = SparkSession.builder.appName("Save AP Avg Data with Aggregation").getOrCreate()
 
 # 函数：生成从 start_date 到 end_date 的日期列表
 def get_date_range(start_date, end_date):
@@ -26,7 +26,7 @@ def get_date_range(start_date, end_date):
     return date_list
 
 # 函数：按时间粒度聚合并存储
-def aggregate_and_save(df, table_name, bucket, output_prefix, time_granularity, start_date, end_date):
+def aggregate_and_save(df, bucket, output_prefix, time_granularity, start_date, end_date):
     if time_granularity == 'hour':
         df_with_time = df.withColumn("time", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd HH:00:00'))
     elif time_granularity == 'day':
@@ -42,8 +42,8 @@ def aggregate_and_save(df, table_name, bucket, output_prefix, time_granularity, 
         *[F.avg(col).alias(col) for col in df.columns if col not in ['controller_id', 'device_id', 'band', 'collection_time', 'time']]
     )
 
-    # 输出路径：按照时间粒度（小时、天）存储，表名加上 "_avg"
-    output_path = f's3a://{bucket}/{output_prefix}/{table_name}_avg/{time_granularity}/'
+    # 输出路径：统一存储为ap_avg
+    output_path = f's3a://{bucket}/{output_prefix}/ap_avg/{time_granularity}/'
 
     # 保存聚合后的结果
     df_aggregated.write.mode('overwrite').parquet(output_path, compression='snappy')
@@ -60,25 +60,8 @@ for date_str in date_list:
         df_ap = spark.read.parquet(input_path)
         print(f"Processing data for date: {date_str}")
 
-        # 处理 backhaul 数据
-        df_backhaul = df_ap.filter(df_ap['is_controller'] == 0).select(
-            "controller_id",
-            "device_id",
-            "band",
-            "collection_time",
-            "backhaul_sta_mac_address",
-            "backhaul_sta_backhaul_link_type",
-            "backhaul_sta_link_rate",
-            "backhaul_sta_signal_strength",
-            "backhaul_sta_utilization"
-        )
-
-        # 聚合并保存 backhaul 数据，分别按小时和天聚合
-        aggregate_and_save(df_backhaul, "backhaul", bucket, output_prefix, 'hour', date_str, date_str)
-        aggregate_and_save(df_backhaul, "backhaul", bucket, output_prefix, 'day', date_str, date_str)
-
-        # 处理 detailed_ap 数据
-        df_detailedap = df_ap.select(
+        # 处理 ap 数据，只选择需要的字段
+        df_ap_avg = df_ap.select(
             "controller_id",
             "device_id",
             "band",
@@ -94,9 +77,9 @@ for date_str in date_list:
             "wan_bandwidth"
         )
 
-        # 聚合并保存 detailed_ap 数据，分别按小时和天聚合
-        aggregate_and_save(df_detailedap, "detailed_ap", bucket, output_prefix, 'hour', date_str, date_str)
-        aggregate_and_save(df_detailedap, "detailed_ap", bucket, output_prefix, 'day', date_str, date_str)
+        # 聚合并保存 ap 数据，分别按小时和天聚合
+        aggregate_and_save(df_ap_avg, bucket, output_prefix, 'hour', date_str, date_str)
+        aggregate_and_save(df_ap_avg, bucket, output_prefix, 'day', date_str, date_str)
 
     except Exception as e:
         print(f"Error processing date {date_str}: {e}")
