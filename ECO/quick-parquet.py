@@ -1,10 +1,11 @@
+import sys
 from pyspark.sql import SparkSession
+
+# 获取命令行参数
+parquet_path = sys.argv[1]  # 从命令行获取 Parquet 文件路径
 
 # 创建 SparkSession
 spark = SparkSession.builder.appName("View Parquet Data from S3").getOrCreate()
-
-# S3 文件路径
-parquet_path = "s3a://aps1-tauc-data-analysis/ods/avg/backhaul_avg/hour/part-00000-e65d11a1-d118-4235-be6a-c17e81688830-c000.snappy.parquet"
 
 # 读取 Parquet 文件
 df = spark.read.parquet(parquet_path)

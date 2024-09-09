@@ -19,6 +19,7 @@ df_client_selected = df_client.select(
 
 # 3. 将提取后的数据保存到目标目录
 client_output_path = "/Users/sunhao/s3/target/wireless"
+
 df_client_selected.write.mode('overwrite').parquet(client_output_path, compression='snappy')
 
 # 停止 SparkSession
