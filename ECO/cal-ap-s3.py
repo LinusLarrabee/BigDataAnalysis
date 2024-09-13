@@ -1,6 +1,7 @@
 import sys
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.functions import col, when
 
 # 获取命令行参数
 bucket = sys.argv[1]
@@ -56,7 +57,7 @@ df_backhaul = df_ap.filter(df_ap['is_controller'] == 0).select(
 )
 save_by_date_partitioning(df_backhaul, "backhaul", bucket, input_prefix, output_prefix, start_date, end_date)
 
-# 处理 detailed_ap 数据并按日期保存
+# 处理 detailed_ap 数据并添加 error_rate 列
 df_detailedap = df_ap.select(
     "controller_id",
     "device_id",
@@ -71,7 +72,14 @@ df_detailedap = df_ap.select(
     "packets_received",
     "packets_sent",
     "wan_bandwidth"
+).withColumn(
+    "error_rate",
+    when((col("packets_received") + col("packets_sent")) > 0,
+         col("errors_pkt") / (col("packets_received") + col("packets_sent"))
+         ).otherwise(0.0)
 )
+
+# 保存数据并按日期分区
 save_by_date_partitioning(df_detailedap, "detailed_ap", bucket, input_prefix, output_prefix, start_date, end_date)
 
 # 停止 SparkSession

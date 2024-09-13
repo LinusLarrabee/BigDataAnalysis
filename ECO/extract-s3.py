@@ -127,20 +127,21 @@ def parse_ap_data(device_data_str, collection_time, controller_id):
                     "backhaul_sta_signal_strength": f_int(radio["BackhaulSta"]["X_TP_SignalStrength"]) if "BackhaulSta" in radio else None,
                     "backhaul_sta_utilization": f_int(radio["BackhaulSta"]["X_TP_Utilization"]) if "BackhaulSta" in radio else None
                 })
+                # 根据 band 来更新 radio_data
                 if band == "2.4GHz":
                     radio_data.update({
-                        "wifi_coverage_score": factor.get("WiFiCoverage2GScore"),
-                        "wifi_availability_score": factor.get("WiFiAvailability2GScore")
+                        "wifi_coverage_score": f_float(factor.get("WiFiCoverage2GScore")),
+                        "wifi_availability_score": f_float(factor.get("WiFiAvailability2GScore"))
                     })
                 elif band == "5GHz":
                     radio_data.update({
-                        "wifi_coverage_score": factor.get("WiFiCoverage5GScore"),
-                        "wifi_availability_score": factor.get("WiFiAvailability5GScore")
+                        "wifi_coverage_score": f_float(factor.get("WiFiCoverage5GScore")),
+                        "wifi_availability_score": f_float(factor.get("WiFiAvailability5GScore"))
                     })
                 elif band == "6GHz":
                     radio_data.update({
-                        "wifi_coverage_score": factor.get("WiFiCoverage6GScore"),
-                        "wifi_availability_score": factor.get("WiFiAvailability6GScore")
+                        "wifi_coverage_score": f_float(factor.get("WiFiCoverage6GScore")),
+                        "wifi_availability_score": f_float(factor.get("WiFiAvailability6GScore"))
                     })
                 result.append(radio_data)
         return result
@@ -232,7 +233,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 指定读取文件路径
-input_path = 's3a://aps1-tauc-data-analysis/aaa/'  # 输入路径
+# input_path = 's3a://aps1-tauc-data-analysis/aaa/'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -319,8 +320,8 @@ parse_ap_data_udf = udf(lambda device_data_str, collection_time, controller_id: 
     StructField("internet_jitter_score", DoubleType(), True),
     StructField("system_health_score", DoubleType(), True),
     StructField("congestion_score", DoubleType(), True),
-    StructField("wifi_coverage_score", StringType(), True),
-    StructField("wifi_availability_score", StringType(), True),
+    StructField("wifi_coverage_score", DoubleType(), True),
+    StructField("wifi_availability_score", DoubleType(), True),
     StructField("noise", IntegerType(), True),
     StructField("utilization", IntegerType(), True),
     StructField("transmit", IntegerType(), True),
