@@ -1,12 +1,29 @@
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, lit
+from pyspark.sql.functions import col, when
 from datetime import datetime, timedelta
 import logging
 
+def process_time_range(start_date, end_date):
+    """
+    生成从 start_date 到 end_date 的日期列表
+    :param start_date: 起始日期，格式为 'YYYY-MM-DD'
+    :param end_date: 结束日期，格式为 'YYYY-MM-DD'
+    :return: 日期字符串列表，格式为 'YYYY-MM-DD'
+    """
+    date_list = []
+    current_date = datetime.strptime(start_date, '%Y-%m-%d')
+    end_date = datetime.strptime(end_date, '%Y-%m-%d')
+
+    while current_date <= end_date:
+        date_list.append(current_date.strftime('%Y-%m-%d'))
+        current_date += timedelta(days=1)
+
+    return date_list
+
 def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_date):
     """
-    从 ODS 层计算 errors_rate 并按日期分区保存到 DWD 层，跳过没有数据的日期。
+    从 ODS 层计算 errors_rate 并保存到 DWD 层，跳过没有数据的日期。
     :param bucket: S3 bucket 名称
     :param input_prefix: ODS 表的输入前缀路径
     :param output_prefix: DWD 表的输出前缀路径
@@ -18,12 +35,10 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
         .appName("ODS to DWD - errors_rate Calculation") \
         .getOrCreate()
 
-    # 转换日期格式
-    current_date = datetime.strptime(start_date, '%Y-%m-%d')
-    end_date = datetime.strptime(end_date, '%Y-%m-%d')
+    # 获取时间范围内的所有日期
+    date_list = process_time_range(start_date, end_date)
 
-    while current_date <= end_date:
-        dt = current_date.strftime('%Y-%m-%d')
+    for dt in date_list:
         input_path = f"s3://{bucket}/{input_prefix}/dt={dt}/*.parquet"
 
         # 检查是否有文件存在
@@ -32,7 +47,6 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
             logging.info(f"Processing date {dt} with input path {input_path}")
         except Exception as e:
             logging.warning(f"No data found for date {dt}, skipping. Error: {e}")
-            current_date += timedelta(days=1)
             continue
 
         # 计算errors_rate，确保避免除零错误
@@ -43,13 +57,9 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
                  ).otherwise(0.0)
         )
 
-        # 写入到DWD层的Parquet文件，按日期分区保存（使用Snappy压缩）
-        output_path = f"s3://{bucket}/{output_prefix}/"
+        # 写入到DWD层的Parquet文件（使用Snappy压缩）
+        output_path = f"s3://{bucket}/{output_prefix}/dt={dt}/"
         df_dwd_ap.write.mode("overwrite").parquet(output_path, compression="snappy")
-        df_dwd_ap.printSchema()
-
-        # 处理下一个日期
-        current_date += timedelta(days=1)
 
     # 停止SparkSession
     spark.stop()
