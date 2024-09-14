@@ -7,9 +7,10 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # 读取S3上以Parquet格式存储的文件，带有Snappy压缩
-input_path = "s3://aps1-tauc-data-analysis/extracted/ap_data/dt=2024-07-30/part-00000-4becffb4-9899-49de-9a02-a3195629e102-c000.snappy.parquet"
+input_path = "s3://aps1-tauc-data-analysis/extracted/part-00000-43d2a418-13a5-4c57-b654-e7fd8a428ef0-c000.snappy.parquet"
 df = spark.read.parquet(input_path)
 
+df.printSchema()
 # 如果存在dt字段，移除该字段
 if 'dt' in df.columns:
     df = df.drop('dt')
@@ -38,7 +39,7 @@ agg_by_hour = df.groupBy("controller_id", "device_id", "band", "collection_time_
 # 显示按小时聚合结果
 print("按小时聚合结果：")
 agg_by_hour.show()
-
+agg_by_hour.printSchema()
 # 按天聚合
 agg_by_day = df.groupBy("controller_id", "device_id", "band", "collection_time_day").agg(
     *[first(col(c)).alias(c) for c in string_columns],  # 对字符串字段取单一值
@@ -48,6 +49,6 @@ agg_by_day = df.groupBy("controller_id", "device_id", "band", "collection_time_d
 # 显示按天聚合结果
 print("按天聚合结果：")
 agg_by_day.show()
-
+agg_by_day.printSchema()
 # 停止SparkSession
 spark.stop()
