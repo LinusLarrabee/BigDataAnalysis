@@ -1,9 +1,7 @@
 from pyspark.sql import SparkSession
-from pyspark.sql import Row
 from pyspark.sql.functions import col, explode, udf
 from pyspark.sql.types import StructType, StructField,IntegerType, StringType, ArrayType, DoubleType
 import json
-import gzip
 import sys
 from pyspark import SparkContext
 

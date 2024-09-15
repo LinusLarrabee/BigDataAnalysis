@@ -49,17 +49,31 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
             logging.warning(f"No data found for date {dt}, skipping. Error: {e}")
             continue
 
+        # 根据 is_controller 字段分为两张表
+        df_controller = df_ods_ap.filter(col("is_controller") == 1)
+        df_non_controller = df_ods_ap.filter(col("is_controller") == 0)
+
         # 计算errors_rate，确保避免除零错误
-        df_dwd_ap = df_ods_ap.withColumn(
+        df_controller_dwd = df_controller.withColumn(
             "errors_rate",
             when((col("packets_received") + col("packets_sent")) > 0,
                  col("errors_pkt") / (col("packets_received") + col("packets_sent"))
                  ).otherwise(0.0)
         )
 
-        # 写入到DWD层的Parquet文件（使用Snappy压缩）
-        output_path = f"s3://{bucket}/{output_prefix}/dt={dt}/"
-        df_dwd_ap.write.mode("overwrite").parquet(output_path, compression="snappy")
+        df_non_controller_dwd = df_non_controller.withColumn(
+            "errors_rate",
+            when((col("packets_received") + col("packets_sent")) > 0,
+                 col("errors_pkt") / (col("packets_received") + col("packets_sent"))
+                 ).otherwise(0.0)
+        )
+
+        # 分别写入到DWD层的Parquet文件（使用Snappy压缩）
+        controller_output_path = f"s3://{bucket}/{output_prefix}/controller/dt={dt}/"
+        non_controller_output_path = f"s3://{bucket}/{output_prefix}/non_controller/dt={dt}/"
+
+        df_controller_dwd.write.mode("overwrite").parquet(controller_output_path, compression="snappy")
+        df_non_controller_dwd.write.mode("overwrite").parquet(non_controller_output_path, compression="snappy")
 
     # 停止SparkSession
     spark.stop()
