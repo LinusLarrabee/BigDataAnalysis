@@ -3,6 +3,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when
 from datetime import datetime, timedelta
 import logging
+from pyspark.sql.functions import length
+
 
 def process_time_range(start_date, end_date):
     """
@@ -21,9 +23,9 @@ def process_time_range(start_date, end_date):
 
     return date_list
 
-def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_date):
+def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_date, mode='append'):
     """
-    从 ODS 层计算 errors_rate 并保存到 DWD 层，跳过没有数据的日期。
+    从 ODS 层计算 errors_rate 并保存到 DWD 层，跳过没有数据的日期。并处理 device_id 和计算 backhaul_sta_rssi。
     :param bucket: S3 bucket 名称
     :param input_prefix: ODS 表的输入前缀路径
     :param output_prefix: DWD 表的输出前缀路径
@@ -48,12 +50,25 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
         except Exception as e:
             logging.warning(f"No data found for date {dt}, skipping. Error: {e}")
             continue
+        df_ods_ap.show(truncate=False)
+
+        df_ods_ap = df_ods_ap.filter(
+            (length(col("device_id")) == 17)  # 保留长度为 17 的 device_id
+            # & (col("wifi_coverage_score").isNotNull())  # 保留非空的 wifi_coverage_score
+        )
+        df_ods_ap.show(truncate=False)
 
         # 根据 is_controller 字段分为两张表
         df_controller = df_ods_ap.filter(col("is_controller") == 1)
         df_non_controller = df_ods_ap.filter(col("is_controller") == 0)
 
-        # 计算errors_rate，确保避免除零错误
+        # 对 non_controller 计算 backhaul_sta_rssi
+        df_non_controller = df_non_controller.withColumn(
+            "backhaul_sta_rssi",
+            (col("backhaul_sta_signal_strength") / 2) - 110
+        )
+
+        # 计算 errors_rate，确保避免除零错误
         df_controller_dwd = df_controller.withColumn(
             "errors_rate",
             when((col("packets_received") + col("packets_sent")) > 0,
@@ -72,8 +87,8 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
         controller_output_path = f"s3://{bucket}/{output_prefix}/controller/dt={dt}/"
         non_controller_output_path = f"s3://{bucket}/{output_prefix}/non_controller/dt={dt}/"
 
-        df_controller_dwd.write.mode("overwrite").parquet(controller_output_path, compression="snappy")
-        df_non_controller_dwd.write.mode("overwrite").parquet(non_controller_output_path, compression="snappy")
+        df_controller_dwd.write.mode(mode).parquet(controller_output_path, compression="snappy")
+        df_non_controller_dwd.write.mode(mode).parquet(non_controller_output_path, compression="snappy")
 
     # 停止SparkSession
     spark.stop()
@@ -86,6 +101,7 @@ if __name__ == "__main__":
     output_prefix = sys.argv[3]
     start_date = sys.argv[4]
     end_date = sys.argv[5]
+    mode = sys.argv[6] if len(sys.argv) > 6 else 'append'  # 默认写入模式为 'append'
 
     # 调用计算函数
-    calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_date)
+    calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_date, mode)
