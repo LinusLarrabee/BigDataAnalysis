@@ -72,7 +72,7 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
             )
 
             # 写入 wire 的 DWM 层
-            wire_output_path = f"s3://{bucket}/{output_prefix}/wire_dwm/dt={dt}/"
+            wire_output_path = f"s3://{bucket}/{output_prefix}/wire_data/dt={dt}/"
             df_wire_final = df_wire.join(df_wire_device_agg, ["device_id", "collection_time"], "left") \
                 .join(df_wire_network_agg, ["controller_id", "collection_time"], "left")
             df_wire_final.write.mode("overwrite").parquet(wire_output_path, compression="snappy")
@@ -99,8 +99,8 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
                     "device_id", "collection_time",
                     "per_device_wireless_count",
                     "per_device_wire_count",
-                    (coalesce(col("per_device_wireless_count"), col("per_device_wireless_count"))) +
-                    (coalesce(col("per_device_wire_count"), col("per_device_wire_count"))).alias("per_device_count")
+                    (coalesce(col("per_device_wireless_count"), col("per_device_wireless_count")) +
+                     coalesce(col("per_device_wire_count"), col("per_device_wire_count"))).alias("per_device_count")
                 )
 
                 df_network_agg = df_wireless_network_agg.join(
@@ -109,18 +109,27 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
                     "controller_id", "collection_time",
                     "per_network_wireless_count",
                     "per_network_wire_count",
-                    (coalesce(col("per_network_wireless_count"), col("per_network_wireless_count"))) +
-                    (coalesce(col("per_network_wire_count"), col("per_network_wire_count"))).alias("per_network_count")
+                    (coalesce(col("per_network_wireless_count"), col("per_network_wireless_count")) +
+                     coalesce(col("per_network_wire_count"), col("per_network_wire_count"))).alias("per_network_count")
                 )
             else:
                 # 如果只有 wireless 数据
                 df_device_agg = df_wireless_device_agg.withColumnRenamed("per_device_wireless_count", "per_device_count")
                 df_network_agg = df_wireless_network_agg.withColumnRenamed("per_network_wireless_count", "per_network_count")
 
-            # 将无线表的 device 和 network 聚合结果写入无线的 DWM 层
-            wireless_output_path = f"s3://{bucket}/{output_prefix}/wireless_dwm/dt={dt}/"
-            df_wireless_final = df_wireless_band_first.join(df_device_agg, ["device_id", "collection_time"], "left") \
-                .join(df_network_agg, ["controller_id", "collection_time"], "left")
+            # 更新写入逻辑，确保带上原始wireless数据
+            df_wireless_final = df_wireless.join(df_device_agg, ["device_id", "collection_time"], "left") \
+                .join(df_network_agg, ["controller_id", "collection_time"], "left") \
+                .select(df_wireless["*"],
+                        "per_device_wireless_count",
+                        "per_device_wire_count",
+                        "per_device_count",
+                        "per_network_wireless_count",
+                        "per_network_wire_count",
+                        "per_network_count")
+
+            # 写入聚合后的最终结果到无线的DWM层
+            wireless_output_path = f"s3://{bucket}/{output_prefix}/wireless_data/dt={dt}/"
             df_wireless_final.show(truncate=False)
             df_wireless_final.write.mode("overwrite").parquet(wireless_output_path, compression="snappy")
 
