@@ -204,12 +204,12 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
         result = []
         for device_id, device in multiap_data_list.items():
             # 计算 AssociatedDevice 的数量
-            assoc_device_count = len(device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}))
+            sta_count = len(device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}))
             for assoc_device_id, assoc_device in device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}).items():
                 result.append({
                     "controller_id": controller_id,
                     "collection_time": collection_time,
-                    "ap_device_id": assoc_device.get("APDeviceID"),
+                    "device_id": assoc_device.get("APDeviceID"),
                     "mac_address": assoc_device.get("MACAddress"),
                     "ip_address": assoc_device.get("IPAddress"),
                     "host_name": assoc_device.get("X_TP_HostName"),
@@ -223,7 +223,7 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
                     "errors_sent": f_int(assoc_device.get("ErrorsSent")),
                     "errors_received": f_int(assoc_device.get("ErrorsReceived")),
                     "interface_type": assoc_device.get("InterfaceType"),
-                    "assoc_device_count": assoc_device_count  # 新增字段：关联设备数量
+                    "sta_count": sta_count  # 新增字段：关联设备数量
                 })
         return result
     except Exception as e:
@@ -403,7 +403,7 @@ parse_multiap_data_udf = udf(lambda multiap_data_str, collection_time, controlle
     # StructField("region", StringType(), True),
     StructField("controller_id", StringType(), True),
     StructField("collection_time", StringType(), True),
-    StructField("ap_device_id", StringType(), True),
+    StructField("device_id", StringType(), True),
     StructField("mac_address", StringType(), True),
     StructField("ip_address", StringType(), True),
     StructField("host_name", StringType(), True),
@@ -417,7 +417,7 @@ parse_multiap_data_udf = udf(lambda multiap_data_str, collection_time, controlle
     StructField("errors_sent", IntegerType(), True),
     StructField("errors_received", IntegerType(), True),
     StructField("interface_type", StringType(), True),
-    StructField("assoc_device_count", IntegerType(), True)  # 新增字段：关联设备数量
+    StructField("sta_count", IntegerType(), True)  # 新增字段：关联设备数量
 ])))
 
 df_multiap_split = df_multiap_data.withColumn(
