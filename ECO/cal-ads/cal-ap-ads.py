@@ -36,10 +36,20 @@ def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, dws_agg_list, 
             (col("c.collection_time") == col("n.collection_time")),
             "left"
         ).select(
-            "c.*",  # 保留 controller 的所有字段
-            "n.backhaul_sta_rssi",  # 添加 noncontroller 的 backhaul_sta_rssi
-            "n.backhaul_sta_link_rate"  # 添加 noncontroller 的 linkrate
+            col("c.controller_id"),  # 选择 controller_id
+            col("c.band"),  # 选择 band
+            col("c.collection_time"),  # 选择 collection_time
+            col("c.average_rx_rate"),  # 选择 average_rx_rate
+            col("c.average_tx_rate"),  # 选择 average_tx_rate
+            col("c.congestion_score"),  # 选择 congestion_score
+            col("c.wifi_coverage_score"),  # 选择 wifi_coverage_score
+            col("c.noise"),  # 选择 noise
+            col("c.errors_rate"),  # 选择 errors_rate
+            col("c.wan_bandwidth"),  # 选择 wan_bandwidth
+            col("n.backhaul_sta_rssi"),  # 添加 noncontroller 的 backhaul_sta_rssi
+            col("n.backhaul_sta_link_rate")  # 添加 noncontroller 的 backhaul_sta_linkrate
         )
+
 
         # 根据聚合维度写入到相应的 ADS 层路径
         output_path = f"s3://{bucket}/{ads_output_prefix}/{agg}/network_ads/dt={start_date}/"
