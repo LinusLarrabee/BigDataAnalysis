@@ -92,15 +92,14 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
             )
 
             if wire_exists:
-                # 如果 wire 和 wireless 都存在，合并 device 和 network 聚合结果
+                # 如果 wire 和 wireless 都存在，合并 device 和 network 聚合结果，优先使用 wire 的值
                 df_device_agg = df_wireless_device_agg.join(
                     df_wire_device_agg, ["device_id", "collection_time"], "left"
                 ).select(
                     "device_id", "collection_time",
                     "per_device_wireless_count",
                     "per_device_wire_count",
-                    (coalesce(col("per_device_wireless_count"), col("per_device_wireless_count")) +
-                     coalesce(col("per_device_wire_count"), col("per_device_wire_count"))).alias("per_device_count")
+                    coalesce(col("per_device_wire_count"), col("per_device_wireless_count")).alias("per_device_count")
                 )
 
                 df_network_agg = df_wireless_network_agg.join(
@@ -109,13 +108,20 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
                     "controller_id", "collection_time",
                     "per_network_wireless_count",
                     "per_network_wire_count",
-                    (coalesce(col("per_network_wireless_count"), col("per_network_wireless_count")) +
-                     coalesce(col("per_network_wire_count"), col("per_network_wire_count"))).alias("per_network_count")
+                    coalesce(col("per_network_wire_count"), col("per_network_wireless_count")).alias("per_network_count")
                 )
             else:
-                # 如果只有 wireless 数据
-                df_device_agg = df_wireless_device_agg.withColumnRenamed("per_device_wireless_count", "per_device_count")
-                df_network_agg = df_wireless_network_agg.withColumnRenamed("per_network_wireless_count", "per_network_count")
+                # 如果只有 wireless 数据，将 wireless 的聚合结果复制到 device 和 network count
+                df_device_agg = df_wireless_device_agg.select(
+                    "device_id", "collection_time",
+                    "per_device_wireless_count",
+                    col("per_device_wireless_count").alias("per_device_count")
+                )
+                df_network_agg = df_wireless_network_agg.select(
+                    "controller_id", "collection_time",
+                    "per_network_wireless_count",
+                    col("per_network_wireless_count").alias("per_network_count")
+                )
 
             # 更新写入逻辑，确保带上原始wireless数据
             df_wireless_final = df_wireless.join(df_device_agg, ["device_id", "collection_time"], "left") \

@@ -1,11 +1,11 @@
-from pyspark.sql.functions import col, when, from_unixtime, avg, first, min, max, date_format
+from pyspark.sql.functions import col, when, from_unixtime, avg, first, min, max, date_format, sum
 from datetime import datetime, timedelta
 import sys
 from pyspark.sql import SparkSession
 
 def replace_invalid_numeric_values(df, numeric_cols):
     """
-    统一替换 DataFrame 中所有指定 numeric_cols 列中的非正常值为 -1.0
+    统一替换 DataFrame 中所有指定 numeric_cols 列中的非正常值为 -1.0，且对空值(null)进行处理。
     :param df: 输入的 DataFrame
     :param numeric_cols: 需要处理的数值列列表
     :return: 返回处理后的 DataFrame
@@ -13,7 +13,9 @@ def replace_invalid_numeric_values(df, numeric_cols):
     for col_name in numeric_cols:
         df = df.withColumn(
             col_name,
-            when(col(col_name) == '---', -1.0).otherwise(col(col_name))
+            when(col(col_name).isNull(), -1)  # 替换 null 为 -1
+                .when(col(col_name) == '---', -1)  # 替换异常值为 -1
+                .otherwise(col(col_name))
         )
     return df
 
@@ -61,7 +63,9 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
 
             # 将字符串和数值字段区分开
             string_columns = [field for field, dtype in df.dtypes if dtype == 'string']
-            numeric_columns = [field for field, dtype in df.dtypes if dtype in ['int', 'double', 'float']]
+            numeric_columns = [field for field, dtype in df.dtypes if dtype in ['int', 'double', 'float', 'long']]
+
+            df.printSchema()
 
             # 1. 基于 controller_id 和 band 进行聚合
             key_columns_controller = ['controller_id', 'band']
@@ -93,7 +97,7 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
             agg_by_hour_device = df_hour.groupBy(*key_columns_device, "collection_time_agg").agg(
                 *[first(col(c)).alias(c) for c in string_columns if c not in key_columns_device],  # 对字符串字段取单一值
                 *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_device],    # 对数值字段取平均值
-                *[sum(col(c)).alias(f"sum_{c}") for c in numeric_columns if c not in key_columns_controller],  # 对数值字段取总和
+                *[sum(col(c)).alias(f"sum_{c}") for c in numeric_columns if c not in key_columns_device],  # 对数值字段取总和
                 *[min(col(c)).alias(f"min_{c}") for c in numeric_columns if c not in key_columns_device],    # 对数值字段取最小值
                 *[max(col(c)).alias(f"max_{c}") for c in numeric_columns if c not in key_columns_device]     # 对数值字段取最大值
             )
@@ -102,7 +106,7 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
             agg_by_day_device = df_day.groupBy(*key_columns_device, "collection_time_agg").agg(
                 *[first(col(c)).alias(c) for c in string_columns if c not in key_columns_device],  # 对字符串字段取单一值
                 *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_device],    # 对数值字段取平均值
-                *[sum(col(c)).alias(f"sum_{c}") for c in numeric_columns if c not in key_columns_controller],  # 对数值字段取总和
+                *[sum(col(c)).alias(f"sum_{c}") for c in numeric_columns if c not in key_columns_device],  # 对数值字段取总和
                 *[min(col(c)).alias(f"min_{c}") for c in numeric_columns if c not in key_columns_device],    # 对数值字段取最小值
                 *[max(col(c)).alias(f"max_{c}") for c in numeric_columns if c not in key_columns_device]     # 对数值字段取最大值
             )

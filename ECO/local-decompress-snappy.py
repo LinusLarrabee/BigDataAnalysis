@@ -1,7 +1,7 @@
 import pandas as pd
 
 # 读取 Parquet 文件
-parquet_file_path = "/Users/sunhao/Downloads/part-00000-9fea6d81-860d-403a-a01e-be5dd283c9b0-c000.snappy.parquet"
+parquet_file_path = "/Users/sunhao/Downloads/part-00000-8922e066-66d4-48ff-8a3b-28b3e77c4fcf-c000.snappy.parquet"
 df = pd.read_parquet(parquet_file_path)
 print(f"Original Parquet file rows: {len(df)}")
 
