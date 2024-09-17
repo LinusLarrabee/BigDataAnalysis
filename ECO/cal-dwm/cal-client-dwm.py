@@ -22,10 +22,10 @@ def process_time_range(start_date, end_date):
     return date_list
 
 
-def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end_date):
+def calculate_dwm_with_wire_and_band(bucket, input_prefix, output_prefix, start_date, end_date):
     """
     计算每个 device 和 network 的 DWM (sta_count 聚合结果)，
-    对于 wire 和 wireless 分别计算，并在需要时合并聚合计算写入 DWM 层。
+    对于 wire 和 wireless 分别计算，新增按频段（band）先聚合再汇总的方式，并生成 per_band_count。
     :param bucket: S3 bucket 名称
     :param input_prefix: 数据的前缀路径
     :param output_prefix: 输出的前缀路径
@@ -34,7 +34,7 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
     """
     # 初始化SparkSession
     spark = SparkSession.builder \
-        .appName("Client DWM Calculation with Wire") \
+        .appName("Client DWM Calculation with Wire and Band") \
         .getOrCreate()
 
     # 获取日期范围列表
@@ -91,6 +91,11 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
                 _sum("sta_count").cast("int").alias("per_network_wireless_count")
             )
 
+            # 新增：计算每个 band 层次的聚合
+            df_wireless_band_agg = df_wireless.groupBy("band", "controller_id", "device_id", "collection_time").agg(
+                _sum("sta_count").cast("int").alias("per_band_count")
+            )
+
             if wire_exists:
                 # 如果 wire 和 wireless 都存在，合并 device 和 network 聚合结果，优先使用 wire 的值
                 df_device_agg = df_wireless_device_agg.join(
@@ -123,16 +128,18 @@ def calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end
                     col("per_network_wireless_count").cast("int").alias("per_network_count")
                 )
 
-            # 更新写入逻辑，确保带上原始wireless数据
+            # 将 band 层次的聚合结果与其他聚合结果结合
             df_wireless_final = df_wireless.join(df_device_agg, ["device_id", "collection_time"], "left") \
                 .join(df_network_agg, ["controller_id", "collection_time"], "left") \
+                .join(df_wireless_band_agg, ["device_id", "controller_id", "collection_time"], "left") \
                 .select(df_wireless["*"],
                         "per_device_wireless_count",
                         "per_device_wire_count",
                         "per_device_count",
                         "per_network_wireless_count",
                         "per_network_wire_count",
-                        "per_network_count")
+                        "per_network_count",
+                        "per_band_count")  # 新增列：per_band_count
 
             # 写入聚合后的最终结果到无线的DWM层
             wireless_output_path = f"s3://{bucket}/{output_prefix}/wireless_data/dt={dt}/"
@@ -152,4 +159,4 @@ if __name__ == "__main__":
     end_date = sys.argv[5]  # 结束日期
 
     # 调用函数计算 DWM 并写入到 DWD 表
-    calculate_dwm_with_wire(bucket, input_prefix, output_prefix, start_date, end_date)
+    calculate_dwm_with_wire_and_band(bucket, input_prefix, output_prefix, start_date, end_date)
