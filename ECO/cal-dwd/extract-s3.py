@@ -155,6 +155,9 @@ def parse_client_data(device_data_str, collection_time, controller_id):
         for device_id, device in device_data_list.items():
             device_id = device.get("ID", device_id)  # 确保使用正确的12位ID
             for radio_id, radio in device.get('Radio', {}).items():
+                # 计算当前 radio 下的 STA 数量
+                sta_count = sum([len(bss.get('STA', {})) for bss_id, bss in radio.get('BSS', {}).items()])
+
                 for bss_id, bss in radio.get('BSS', {}).items():
                     for sta_id, sta in bss.get('STA', {}).items():
                         factor = sta.get("X_TP_QoE", {}).get("Factor", {})
@@ -166,6 +169,7 @@ def parse_client_data(device_data_str, collection_time, controller_id):
                             "sta_id": sta_id,
                             "band": radio.get("X_TP_Band"),
                             "collection_time": collection_time,
+                            "sta_count": sta_count,  # 添加当前 radio 的 STA 数量
                             "last_data_downlink_rate": f_int(sta.get("LastDataDownlinkRate")),
                             "last_data_uplink_rate": f_int(sta.get("LastDataUplinkRate")),
                             "mac_address": sta.get("MACAddress"),
@@ -199,6 +203,8 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
         multiap_data_list = json.loads(multiap_data_str)
         result = []
         for device_id, device in multiap_data_list.items():
+            # 计算 AssociatedDevice 的数量
+            assoc_device_count = len(device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}))
             for assoc_device_id, assoc_device in device.get("X_TP_Ethernet", {}).get("AssociatedDevice", {}).items():
                 result.append({
                     "controller_id": controller_id,
@@ -216,7 +222,8 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
                     "packets_received": f_int(assoc_device.get("PacketReceived")),
                     "errors_sent": f_int(assoc_device.get("ErrorsSent")),
                     "errors_received": f_int(assoc_device.get("ErrorsReceived")),
-                    "interface_type": assoc_device.get("InterfaceType")
+                    "interface_type": assoc_device.get("InterfaceType"),
+                    "assoc_device_count": assoc_device_count  # 新增字段：关联设备数量
                 })
         return result
     except Exception as e:
@@ -361,6 +368,7 @@ parse_client_data_udf = udf(lambda device_data_str, collection_time, controller_
     StructField("sta_id", StringType(), True),
     StructField("band", StringType(), True),
     StructField("collection_time", StringType(), True),
+    StructField("sta_count", IntegerType(), True),  # 新增的字段：sta_count
     StructField("last_data_downlink_rate", IntegerType(), True),
     StructField("last_data_uplink_rate", IntegerType(), True),
     StructField("mac_address", StringType(), True),
@@ -408,7 +416,8 @@ parse_multiap_data_udf = udf(lambda multiap_data_str, collection_time, controlle
     StructField("packets_received", IntegerType(), True),
     StructField("errors_sent", IntegerType(), True),
     StructField("errors_received", IntegerType(), True),
-    StructField("interface_type", StringType(), True)
+    StructField("interface_type", StringType(), True),
+    StructField("assoc_device_count", IntegerType(), True)  # 新增字段：关联设备数量
 ])))
 
 df_multiap_split = df_multiap_data.withColumn(
@@ -444,8 +453,8 @@ def save_by_date_partitioning(df, table_name, bucket, output_prefix):
 
 # 使用新的方式存储 AP_DATA, CLIENT_DATA, MULTIAP 数据
 save_by_date_partitioning(df_ap_split, "ap_data", bucket, output_prefix)
-save_by_date_partitioning(df_client_split, "client_data", bucket, output_prefix)
-save_by_date_partitioning(df_multiap_split, "multiap_data", bucket, output_prefix)
+save_by_date_partitioning(df_client_split, "wireless_data", bucket, output_prefix)
+save_by_date_partitioning(df_multiap_split, "wire_data", bucket, output_prefix)
 
 # 停止 SparkSession
 spark.stop()

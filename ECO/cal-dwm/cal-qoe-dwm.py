@@ -1,10 +1,8 @@
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
+from pyspark.sql.functions import col, when, length
 from datetime import datetime, timedelta
 import logging
-from pyspark.sql.functions import length
-
 
 def process_time_range(start_date, end_date):
     """
@@ -52,15 +50,22 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
             continue
         df_ods_ap.show(truncate=False)
 
+        # 过滤 device_id 长度为 17 的数据
         df_ods_ap = df_ods_ap.filter(
-            (length(col("device_id")) == 17)  # 保留长度为 17 的 device_id
-            # & (col("wifi_coverage_score").isNotNull())  # 保留非空的 wifi_coverage_score
+            (length(col("device_id")) == 17)
+        # ).withColumn(
+        #     "wifi_coverage_score",
+        #     when(col("wifi_coverage_score") == '---', -1.0).otherwise(col("wifi_coverage_score"))
         )
         df_ods_ap.show(truncate=False)
 
         # 根据 is_controller 字段分为两张表
         df_controller = df_ods_ap.filter(col("is_controller") == 1)
         df_non_controller = df_ods_ap.filter(col("is_controller") == 0)
+
+        # 删除 controller 中以 'backhaul_sta' 开头的列
+        backhaul_sta_columns = [col_name for col_name in df_controller.columns if col_name.startswith("backhaul_sta")]
+        df_controller_cleaned = df_controller.drop(*backhaul_sta_columns)
 
         # 对 non_controller 计算 backhaul_sta_rssi
         df_non_controller = df_non_controller.withColumn(
@@ -69,7 +74,7 @@ def calculate_errors_rate(bucket, input_prefix, output_prefix, start_date, end_d
         )
 
         # 计算 errors_rate，确保避免除零错误
-        df_controller_dwd = df_controller.withColumn(
+        df_controller_dwd = df_controller_cleaned.withColumn(
             "errors_rate",
             when((col("packets_received") + col("packets_sent")) > 0,
                  col("errors_pkt") / (col("packets_received") + col("packets_sent"))

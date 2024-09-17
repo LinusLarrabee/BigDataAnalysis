@@ -2,15 +2,15 @@ import sys
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
-def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, start_date, end_date, dws_agg_list):
+def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, dws_agg_list, start_date, end_date):
     """
     从 DWS 层计算 ADS 层，以 controller 的 network 表为主表，基于 controller_id 进行关联，添加 noncontroller 的 backhaul_sta_rssi 和 linkrate。
     :param bucket: S3 bucket 名称
     :param dws_prefix: DWS 表的前缀路径
     :param ads_output_prefix: ADS 表的输出前缀路径
+    :param dws_agg_list: 包含 'daily', 'hourly' 的列表，用于动态生成路径
     :param start_date: 起始日期，格式为 'YYYY-MM-DD'
     :param end_date: 结束日期，格式为 'YYYY-MM-DD'
-    :param dws_agg_list: 包含 'daily', 'hourly' 的列表，用于动态生成路径
     """
     # 初始化SparkSession
     spark = SparkSession.builder \
@@ -19,8 +19,8 @@ def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, start_date, en
 
     # 遍历聚合列表
     for agg in dws_agg_list:
-        controller_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/dt={start_date}/*.parquet"
-        noncontroller_path = f"s3://{bucket}/{dws_prefix}/{agg}/device_id/dt={start_date}/*.parquet"
+        controller_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/controller/dt={start_date}/*.parquet"
+        noncontroller_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/non_controller/dt={start_date}/*.parquet"
 
         # 读取 controller 的 network 表
         df_controller = spark.read.parquet(controller_path)
@@ -38,7 +38,7 @@ def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, start_date, en
         ).select(
             "c.*",  # 保留 controller 的所有字段
             "n.backhaul_sta_rssi",  # 添加 noncontroller 的 backhaul_sta_rssi
-            "n.linkrate"  # 添加 noncontroller 的 linkrate
+            "n.backhaul_sta_link_rate"  # 添加 noncontroller 的 linkrate
         )
 
         # 根据聚合维度写入到相应的 ADS 层路径
@@ -53,9 +53,9 @@ if __name__ == "__main__":
     bucket = sys.argv[1]  # S3 bucket 名称
     dws_prefix = sys.argv[2]  # DWS 表的前缀路径
     ads_output_prefix = sys.argv[3]  # ADS 表的输出前缀路径
-    start_date = sys.argv[4]  # 起始日期，格式为 'YYYY-MM-DD'
-    end_date = sys.argv[5]  # 结束日期，格式为 'YYYY-MM-DD'
-    dws_agg_list = sys.argv[6].split(',')  # 传入的聚合维度列表，逗号分隔
+    dws_agg_list = sys.argv[4].split(',')  # 传入的聚合维度列表，逗号分隔
+    start_date = sys.argv[5]  # 起始日期，格式为 'YYYY-MM-DD'
+    end_date = sys.argv[6]  # 结束日期，格式为 'YYYY-MM-DD'
 
     # 调用计算函数
-    calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, start_date, end_date, dws_agg_list)
+    calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, dws_agg_list, start_date, end_date)

@@ -1,7 +1,21 @@
+from pyspark.sql.functions import col, when, from_unixtime, avg, first, min, max, date_format
+from datetime import datetime, timedelta
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_unixtime, col, avg, first, date_format
-from datetime import datetime, timedelta
+
+def replace_invalid_numeric_values(df, numeric_cols):
+    """
+    统一替换 DataFrame 中所有指定 numeric_cols 列中的非正常值为 -1.0
+    :param df: 输入的 DataFrame
+    :param numeric_cols: 需要处理的数值列列表
+    :return: 返回处理后的 DataFrame
+    """
+    for col_name in numeric_cols:
+        df = df.withColumn(
+            col_name,
+            when(col(col_name) == '---', -1.0).otherwise(col(col_name))
+        )
+    return df
 
 def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, end_date):
     """
@@ -56,14 +70,18 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
             df_hour = df.withColumn("collection_time_agg", date_format(from_unixtime(col("collection_time")), "yyyy-MM-dd HH:00:00"))
             agg_by_hour_controller = df_hour.groupBy(*key_columns_controller, "collection_time_agg").agg(
                 *[first(col(c)).alias(c) for c in string_columns if c not in key_columns_controller],  # 对字符串字段取单一值
-                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_controller]    # 对数值字段取平均值
+                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_controller],    # 对数值字段取平均值
+                *[min(col(c)).alias(f"min_{c}") for c in numeric_columns if c not in key_columns_controller],    # 对数值字段取最小值
+                *[max(col(c)).alias(f"max_{c}") for c in numeric_columns if c not in key_columns_controller]     # 对数值字段取最大值
             )
 
             # 按天聚合
             df_day = df.withColumn("collection_time_agg", date_format(from_unixtime(col("collection_time")), "yyyy-MM-dd"))
             agg_by_day_controller = df_day.groupBy(*key_columns_controller, "collection_time_agg").agg(
                 *[first(col(c)).alias(c) for c in string_columns if c not in key_columns_controller],  # 对字符串字段取单一值
-                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_controller]    # 对数值字段取平均值
+                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_controller],    # 对数值字段取平均值
+                *[min(col(c)).alias(f"min_{c}") for c in numeric_columns if c not in key_columns_controller],    # 对数值字段取最小值
+                *[max(col(c)).alias(f"max_{c}") for c in numeric_columns if c not in key_columns_controller]     # 对数值字段取最大值
             )
 
             # 2. 基于 device_id 和 band 进行聚合
@@ -72,14 +90,24 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
             # 按小时聚合
             agg_by_hour_device = df_hour.groupBy(*key_columns_device, "collection_time_agg").agg(
                 *[first(col(c)).alias(c) for c in string_columns if c not in key_columns_device],  # 对字符串字段取单一值
-                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_device]    # 对数值字段取平均值
+                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_device],    # 对数值字段取平均值
+                *[min(col(c)).alias(f"min_{c}") for c in numeric_columns if c not in key_columns_device],    # 对数值字段取最小值
+                *[max(col(c)).alias(f"max_{c}") for c in numeric_columns if c not in key_columns_device]     # 对数值字段取最大值
             )
 
             # 按天聚合
             agg_by_day_device = df_day.groupBy(*key_columns_device, "collection_time_agg").agg(
                 *[first(col(c)).alias(c) for c in string_columns if c not in key_columns_device],  # 对字符串字段取单一值
-                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_device]    # 对数值字段取平均值
+                *[avg(col(c)).alias(c) for c in numeric_columns if c not in key_columns_device],    # 对数值字段取平均值
+                *[min(col(c)).alias(f"min_{c}") for c in numeric_columns if c not in key_columns_device],    # 对数值字段取最小值
+                *[max(col(c)).alias(f"max_{c}") for c in numeric_columns if c not in key_columns_device]     # 对数值字段取最大值
             )
+
+            # 聚合后处理数值列中的异常值
+            agg_by_hour_controller = replace_invalid_numeric_values(agg_by_hour_controller, numeric_columns)
+            agg_by_day_controller = replace_invalid_numeric_values(agg_by_day_controller, numeric_columns)
+            agg_by_hour_device = replace_invalid_numeric_values(agg_by_hour_device, numeric_columns)
+            agg_by_day_device = replace_invalid_numeric_values(agg_by_day_device, numeric_columns)
 
             # 显示聚合结果
             print(f"按小时聚合结果 for {dt} (controller_id):")
@@ -92,7 +120,7 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
             print(f"按天聚合结果 for {dt} (device_id):")
             agg_by_day_device.show()
 
-            # 写入到DWD层的Parquet文件，按小时和按天分别保存（使用Snappy压缩）
+            # 写入到 DWD 层的 Parquet 文件，按小时和按天分别保存（使用 Snappy 压缩）
             agg_by_hour_controller.write.mode("overwrite").parquet(output_path_hour_controller, compression="snappy")
             agg_by_day_controller.write.mode("overwrite").parquet(output_path_day_controller, compression="snappy")
 
@@ -104,7 +132,6 @@ def aggregate_data(bucket, input_prefix, output_prefix, input_list, start_date, 
 
     # 停止SparkSession
     spark.stop()
-
 
 if __name__ == "__main__":
     # 获取命令行参数
