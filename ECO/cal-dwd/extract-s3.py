@@ -156,7 +156,7 @@ def parse_client_data(device_data_str, collection_time, controller_id):
             device_id = device.get("ID", device_id)  # 确保使用正确的12位ID
             for radio_id, radio in device.get('Radio', {}).items():
                 # 计算当前 radio 下的 STA 数量
-                sta_count = sum([len(bss.get('STA', {})) for bss_id, bss in radio.get('BSS', {}).items()])
+                sta_count = sum([len(bss.get('STA', {})) for bss in radio.get('BSS', {}).values()])
 
                 for bss_id, bss in radio.get('BSS', {}).items():
                     for sta_id, sta in bss.get('STA', {}).items():
