@@ -1,10 +1,28 @@
 import sys
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
+from datetime import datetime, timedelta
+
+def process_time_range(start_date, end_date):
+    """
+    生成从 start_date 到 end_date 的日期列表
+    :param start_date: 起始日期，格式为 'YYYY-MM-DD'
+    :param end_date: 结束日期，格式为 'YYYY-MM-DD'
+    :return: 日期字符串列表，格式为 'YYYY-MM-DD'
+    """
+    date_list = []
+    current_date = datetime.strptime(start_date, '%Y-%m-%d')
+    end_date = datetime.strptime(end_date, '%Y-%m-%d')
+
+    while current_date <= end_date:
+        date_list.append(current_date.strftime('%Y-%m-%d'))
+        current_date += timedelta(days=1)
+
+    return date_list
 
 def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, dws_agg_list, start_date, end_date):
     """
-    从 DWS 层计算 ADS 层，以 controller 的 network 表为主表，基于 controller_id 进行关联，添加 noncontroller 的 backhaul_sta_rssi 和 linkrate。
+    从 DWS 层计算 ADS 层，以 controller 的 network 表为主表，添加 wireless 表中的 per_band_count、per_network_wireless_count 和 per_network_count 信息。
     :param bucket: S3 bucket 名称
     :param dws_prefix: DWS 表的前缀路径
     :param ads_output_prefix: ADS 表的输出前缀路径
@@ -14,46 +32,53 @@ def calculate_ads_from_dws(bucket, dws_prefix, ads_output_prefix, dws_agg_list, 
     """
     # 初始化SparkSession
     spark = SparkSession.builder \
-        .appName("DWS to ADS Calculation with Controller ID Join") \
+        .appName("DWS to ADS Calculation with Controller and Wireless") \
         .getOrCreate()
+
+    # 使用 process_time_range 生成日期列表
+    date_list = process_time_range(start_date, end_date)
 
     # 遍历聚合列表
     for agg in dws_agg_list:
-        controller_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/controller/dt={start_date}/*.parquet"
-        noncontroller_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/non_controller/dt={start_date}/*.parquet"
+        # 遍历日期列表
+        for date_str in date_list:
+            controller_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/controller/dt={date_str}/*.parquet"
+            wireless_path = f"s3://{bucket}/{dws_prefix}/{agg}/controller_id/wireless_data/dt={date_str}/*.parquet"
 
-        # 读取 controller 的 network 表
-        df_controller = spark.read.parquet(controller_path)
+            # 读取 controller 的 network 表
+            df_controller = spark.read.parquet(controller_path)
 
-        # 读取 noncontroller 的 network 表
-        df_noncontroller = spark.read.parquet(noncontroller_path)
+            # 读取 wireless 的 network 表
+            df_wireless = spark.read.parquet(wireless_path)
 
-        # 基于 controller_id 进行关联
-        df_ads = df_controller.alias("c").join(
-            df_noncontroller.alias("n"),
-            (col("c.controller_id") == col("n.controller_id")) &
-            (col("c.band") == col("n.band")) &
-            (col("c.collection_time") == col("n.collection_time")),
-            "left"
-        ).select(
-            col("c.controller_id"),  # 选择 controller_id
-            col("c.band"),  # 选择 band
-            col("c.collection_time"),  # 选择 collection_time
-            col("c.average_rx_rate"),  # 选择 average_rx_rate
-            col("c.average_tx_rate"),  # 选择 average_tx_rate
-            col("c.congestion_score"),  # 选择 congestion_score
-            col("c.wifi_coverage_score"),  # 选择 wifi_coverage_score
-            col("c.noise"),  # 选择 noise
-            col("c.errors_rate"),  # 选择 errors_rate
-            col("c.wan_bandwidth"),  # 选择 wan_bandwidth
-            col("n.backhaul_sta_rssi"),  # 添加 noncontroller 的 backhaul_sta_rssi
-            col("n.backhaul_sta_link_rate")  # 添加 noncontroller 的 backhaul_sta_linkrate
-        )
+            # 基于 collection_time_agg 和 controller_id 进行关联
+            df_ads = df_controller.alias("c").join(
+                df_wireless.alias("w"),
+                (col("c.controller_id") == col("w.controller_id")) &
+                (col("c.band") == col("w.band")) &
+                (col("c.collection_time_agg") == col("w.collection_time_agg")),
+                "left"
+            ).select(
+                col("c.controller_id"),  # 选择 controller_id
+                col("c.band"),  # 选择 band
+                col("c.collection_time"),  # 选择 collection_time_agg
+                col("c.collection_time_agg"),  # 选择 collection_time_agg
+                col("c.average_rx_rate"),  # 选择 average_rx_rate
+                col("c.average_tx_rate"),  # 选择 average_tx_rate
+                col("c.congestion_score"),  # 选择 congestion_score
+                col("c.wifi_coverage_score"),  # 选择 wifi_coverage_score
+                col("c.noise"),  # 选择 noise
+                col("c.errors_rate"),  # 选择 errors_rate
+                col("c.wan_bandwidth"),  # 选择 wan_bandwidth
+                col("w.per_band_count"),  # 添加 wireless 的 per_band_count
+                col("w.per_network_wireless_count"),  # 添加 wireless 的 per_network_wireless_count
+                col("w.per_network_count")  # 添加 wireless 的 per_network_count
+            )
 
-
-        # 根据聚合维度写入到相应的 ADS 层路径
-        output_path = f"s3://{bucket}/{ads_output_prefix}/{agg}/network_ads/dt={start_date}/"
-        df_ads.write.mode("overwrite").parquet(output_path, compression="snappy")
+            # 根据聚合维度写入到相应的 ADS 层路径
+            df_ads.show(truncate=False)
+            output_path = f"s3://{bucket}/{ads_output_prefix}/{agg}/network_ads/dt={date_str}/"
+            df_ads.write.mode("overwrite").parquet(output_path, compression="snappy")
 
     # 停止SparkSession
     spark.stop()
