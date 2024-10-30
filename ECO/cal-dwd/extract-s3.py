@@ -1,9 +1,10 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, explode, udf
+from pyspark.sql.functions import col, explode, udf, when
 from pyspark.sql.types import StructType, StructField,IntegerType, StringType, ArrayType, DoubleType
 import json
 import sys
 from pyspark import SparkContext
+from pyspark.sql import functions as F
 
 # 安全转换为整数的函数
 def f_int(value):
@@ -26,42 +27,61 @@ def extract_qoe(json_str):
         # 去除转义
         replaced_str = json_str.replace('\\', '')
 
-        # 查找kafka消息层
+        # 查找 Kafka 消息层
         type_start = replaced_str.find("{\"filterKey\":\"")
         type_end = replaced_str.find("\",\"message\":\"{")
 
         if type_start == -1 or type_end == -1:
-            return "string format error! str= " + replaced_str
+            return f"string format error! str= {replaced_str}"
 
         qoe_type = replaced_str[type_start + 14:type_end]  # 确保子字符串完整
 
-        # 查找Qoe内容
+        # 查找 QoE 内容
         data_start = type_end
         data_end = replaced_str.find('","timeStamp')
         if data_start == -1 or data_end == -1:
-            return "string format error! str= " + replaced_str
+            return f"string format error! str= {replaced_str}"
+
         qoe_data = replaced_str[data_start + 13:data_end]
 
+        # 将 QoE 内容解析为 JSON
         qoe_json = json.loads(qoe_data)
         reports = qoe_json['Report']
 
         results = []
         for report in reports:
-            collection_time = report['CollectionTime']
-            controller_id = report['Device']['WiFi']['DataElements']['Network']['ControllerID']
-            device_data_list = report['Device']['WiFi']['DataElements']['Network']['Device']
-            multiap_data_list = report.get('Device', {}).get('WiFi', {}).get('MultiAP', {}).get('APDevice', {})
-            results.append({
-                "qoe_type": qoe_type,
-                "collection_time": str(collection_time),
-                "controller_id": controller_id,
-                "device_data_list": json.dumps(device_data_list),
-                "multiap_data_list": json.dumps(multiap_data_list)
-            })
+            try:
+                # 解析每个 report 中的字段
+                collection_time = report['CollectionTime']
+                controller_id = report['Device']['WiFi']['DataElements']['Network']['ControllerID']
+                device_data_list = report.get('Device',{}).get('WiFi', {}).get('DataElements',{}).get('Network',{}).get('Device',{})
+                multiap_data_list = report.get('Device', {}).get('WiFi', {}).get('MultiAP', {}).get('APDevice', {})
+
+                # 将解析后的数据添加到结果集中
+                results.append({
+                    "qoe_type": qoe_type,
+                    "collection_time": str(collection_time),
+                    "controller_id": controller_id,
+                    "device_data_list": json.dumps(device_data_list),
+                    "multiap_data_list": json.dumps(multiap_data_list)
+                })
+
+            except KeyError as e:
+                print(f"Missing key error: {e}, in report: {report}")
+                continue  # 跳过当前 report，但不会影响其他 report 的处理
+            except Exception as e:
+                print(f"Error parsing report: {e}, report: {report}")
+                continue  # 跳过当前 report
 
         return results
+
+    except json.JSONDecodeError as e:
+        print(f"JSON decoding error: {e}, data: {json_str}")
+        return []  # 返回空结果，跳过该 JSON
     except Exception as e:
-        raise ValueError(f"Error parsing JSON: {e}")
+        print(f"Unknown error while parsing JSON: {e}, data: {json_str}")
+        return []  # 返回空结果
+
 
 
 # 定义解析 AP_DATA 数据的函数
@@ -119,11 +139,11 @@ def parse_ap_data(device_data_str, collection_time, controller_id):
                     "errors_sent": f_int(radio.get("ErrorsSent", 0)),
                     "errors_received": f_int(radio.get("ErrorsReceived", 0)),
                     "bytes_received": f_int(radio.get("BytesReceived", 0)),
-                    "backhaul_sta_mac_address": radio["BackhaulSta"]["MACAddress"] if "BackhaulSta" in radio else None,
-                    "backhaul_sta_backhaul_link_type": radio["BackhaulSta"]["X_TP_BackhaulLinkType"] if "BackhaulSta" in radio else None,
-                    "backhaul_sta_link_rate": f_int(radio["BackhaulSta"]["X_TP_LinkRate"]) if "BackhaulSta" in radio else None,
-                    "backhaul_sta_signal_strength": f_int(radio["BackhaulSta"]["X_TP_SignalStrength"]) if "BackhaulSta" in radio else None,
-                    "backhaul_sta_utilization": f_int(radio["BackhaulSta"]["X_TP_Utilization"]) if "BackhaulSta" in radio else None
+                    "backhaul_sta_mac_address": radio.get("BackhaulSta", {}).get("MACAddress"),
+                    "backhaul_sta_backhaul_link_type": radio.get("BackhaulSta", {}).get("X_TP_BackhaulLinkType"),
+                    "backhaul_sta_link_rate": f_int(radio.get("BackhaulSta", {}).get("X_TP_LinkRate", 0)),
+                    "backhaul_sta_signal_strength": f_int(radio.get("BackhaulSta", {}).get("X_TP_SignalStrength", 0)),
+                    "backhaul_sta_utilization": f_int(radio.get("BackhaulSta", {}).get("X_TP_Utilization", 0))
                 })
                 # 根据 band 来更新 radio_data
                 if band == "2.4GHz":
@@ -234,6 +254,7 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
 sc = SparkContext(appName="ReadLocalJSONFiles")
 spark = SparkSession.builder \
     .appName(sc.appName) \
+    .config("spark.rpc.message.maxSize", "32MB") \
     .config("spark.sql.debug.maxToStringFields", "1000") \
     .getOrCreate()
 
@@ -298,6 +319,7 @@ for date_str in generate_date_range(start_date, end_date):
 df_qoe_kind = df.withColumn("Qoe", explode(extract_udf(col("value")))).select(col("Qoe.*"))
 
 # 显示结果
+print("Displaying the content of the QoE DataFrame (df_qoe_kind):")
 df_qoe_kind.show(truncate=False)
 
 # 解析 AP_DATA 数据
@@ -420,17 +442,27 @@ parse_multiap_data_udf = udf(lambda multiap_data_str, collection_time, controlle
     StructField("sta_count", IntegerType(), True)  # 新增字段：关联设备数量
 ])))
 
-df_multiap_split = df_multiap_data.withColumn(
+
+# 过滤并解析 multiap_data_list 非空的部分
+df_multiap_split = df_client_data.withColumn(
+    "multiap_data_valid",
+    when(col("multiap_data_list") != '{}', col("multiap_data_list")).otherwise(None)
+).filter(
+    col("multiap_data_valid").isNotNull()
+).withColumn(
     "parsed_data",
-    explode(parse_multiap_data_udf(col("multiap_data_list"), col("collection_time"), col("controller_id")))
+    explode(
+        parse_multiap_data_udf(
+            col("multiap_data_valid"), col("collection_time"), col("controller_id")
+        )
+    )
 ).select("parsed_data.*")
 
 
+print("Displaying the content of the QoE df_multiap_split/df_client_split/df_ap_split")
 df_multiap_split.show(truncate=False)
 df_client_split.show(truncate=False)
 df_ap_split.show(truncate=False)
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 
 # 通用函数：按日期存储数据，bucket 和 output_prefix 分开传递
 def save_by_date_partitioning(df, table_name, bucket, output_prefix):
