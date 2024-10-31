@@ -1,7 +1,6 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
 from datetime import datetime, timedelta
-import pyarrow.parquet as pq
 import sys
 
 # 初始化 SparkSession
@@ -11,13 +10,25 @@ spark = SparkSession.builder \
 
 # 获取输入参数
 bucket = sys.argv[1]
-input_prefix = sys.argv[2]
+input_prefix = sys.argv[2]  # 应该是 "source/ap_survey"
 output_prefix = sys.argv[3]
 start_date = sys.argv[4]
 end_date = sys.argv[5]
 
+# 定义 schema
+schema = StructType([
+    StructField("isp_admin_id", StringType(), nullable=False),
+    StructField("device_id", StringType(), nullable=False),
+    StructField("band", StringType(), nullable=False),
+    StructField("bssid", StringType(), nullable=False),
+    StructField("signal_strength", IntegerType(), nullable=False),
+    StructField("channel", IntegerType(), nullable=False),
+    StructField("bandwidth", StringType(), nullable=False),
+    StructField("message_time", LongType(), nullable=False),
+    StructField("version", IntegerType(), nullable=True)
+])
 
-# 生成日期范围函数
+# 定义日期范围生成函数
 def generate_date_range(start, end):
     start_dt = datetime.strptime(start, "%Y-%m-%d")
     end_dt = datetime.strptime(end, "%Y-%m-%d")
@@ -27,32 +38,28 @@ def generate_date_range(start, end):
         start_dt += timedelta(days=1)
     return date_range
 
-
 # 循环处理每一天的数据
 for date_str in generate_date_range(start_date, end_date):
-    input_path = f's3a://{bucket}/{input_prefix}/{date_str}/messages-*.txt.gz'
-    output_path = f's3a://{bucket}/{output_prefix}/{date_str}/'
+    input_path = f's3a://{bucket}/{input_prefix}/dt={date_str}/ap_survey_*.csv.gz'
+    output_path = f's3a://{bucket}/{output_prefix}/dt={date_str}/'
 
     try:
-        # 读取当前日期的数据
+        # 读取 CSV 文件，Spark 会自动读取多个匹配的文件
         df = spark.read.option("header", "true") \
             .option("compression", "gzip") \
+            .schema(schema) \
             .csv(input_path)
 
-        # 选择需要的列
-        selected_columns = ['column1', 'column2', 'column3']  # 替换成你的实际列名
-        df_selected = df.select(*selected_columns)
-
         # 写入 Parquet 文件，使用 Snappy 压缩
-        df_selected.write \
+        df.write \
             .mode("overwrite") \
             .option("compression", "snappy") \
             .parquet(output_path)
 
-        print(f"Successfully processed {date_str}")
+        print(f"Successfully processed data for date: {date_str}")
 
     except Exception as e:
-        print(f"Error processing {date_str}: {e}")
+        print(f"Error processing data for date {date_str}: {e}")
 
 # 停止 SparkSession
 spark.stop()
