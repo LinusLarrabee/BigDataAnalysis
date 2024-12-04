@@ -279,7 +279,7 @@ extract_udf = udf(extract_qoe, schema)
 # bucket = 'aps1-tauc-data-analysis'
 # 获取输入参数
 bucket = 'uat-tauc-aps1-data-analysis'
-input_prefix = 'source/qoe-raw'
+input_prefix = 'source/qoe-raw-batch'
 output_prefix = 'dwd'
 start_date = '2024-10-09'  # 起始日期
 end_date = '2024-10-09'    # 结束日期

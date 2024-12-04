@@ -82,8 +82,6 @@ def extract_qoe(json_str):
         print(f"Unknown error while parsing JSON: {e}, data: {json_str}")
         return []  # 返回空结果
 
-
-
 # 定义解析 AP_DATA 数据的函数
 def parse_ap_data(device_data_str, collection_time, controller_id):
     try:
@@ -250,6 +248,40 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
         print(f"Error parsing MULTIAP_DATA: {e}, data: {multiap_data_str}")
         raise
 
+
+# 通用函数：按日期存储数据，bucket 和 output_prefix 分开传递
+def save_by_date_partitioning(df, table_name, bucket, output_prefix):
+    # 将 collection_time 转换为日期格式 'YYYY-MM-DD'
+    df_with_date = df.withColumn("formatted_date", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd'))
+
+    # 获取所有不同的日期
+    distinct_dates = df_with_date.select("formatted_date").distinct().collect()
+
+    # 遍历每个日期进行分区存储
+    for row in distinct_dates:
+        date_str = row["formatted_date"]
+        output_path = f's3a://{bucket}/{output_prefix}/{table_name}/dt={date_str}/'  # 生成带 bucket 和前缀的路径
+
+        # 过滤当前日期的数据并保存
+        df_with_date.filter(df_with_date["formatted_date"] == date_str) \
+            .coalesce(1) \
+            .write.mode('overwrite').parquet(output_path, compression='snappy')
+
+
+
+# 生成日期范围并读取数据
+from datetime import datetime, timedelta
+def generate_date_range(start_date, end_date):
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    delta = timedelta(days=1)
+    current = start
+    while current <= end:
+        yield current.strftime("%Y/%m/%d")
+        current += delta
+
+
+
 # 初始化SparkSession
 sc = SparkContext(appName="ReadLocalJSONFiles")
 spark = SparkSession.builder \
@@ -257,9 +289,6 @@ spark = SparkSession.builder \
     .config("spark.rpc.message.maxSize", "32MB") \
     .config("spark.sql.debug.maxToStringFields", "1000") \
     .getOrCreate()
-
-# 指定读取文件路径
-# input_path = 's3a://aps1-tauc-data-analysis/aaa/'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -282,17 +311,6 @@ input_prefix = sys.argv[2]
 output_prefix = sys.argv[3]
 start_date = sys.argv[4]  # 起始日期
 end_date = sys.argv[5]    # 结束日期
-
-# 生成日期范围并读取数据
-from datetime import datetime, timedelta
-def generate_date_range(start_date, end_date):
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    delta = timedelta(days=1)
-    current = start
-    while current <= end:
-        yield current.strftime("%Y/%m/%d")
-        current += delta
 
 df = spark.createDataFrame([], StringType()).toDF("value")  # 初始化空的 DataFrame
 
@@ -464,23 +482,6 @@ df_multiap_split.show(truncate=False)
 df_client_split.show(truncate=False)
 df_ap_split.show(truncate=False)
 
-# 通用函数：按日期存储数据，bucket 和 output_prefix 分开传递
-def save_by_date_partitioning(df, table_name, bucket, output_prefix):
-    # 将 collection_time 转换为日期格式 'YYYY-MM-DD'
-    df_with_date = df.withColumn("formatted_date", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd'))
-
-    # 获取所有不同的日期
-    distinct_dates = df_with_date.select("formatted_date").distinct().collect()
-
-    # 遍历每个日期进行分区存储
-    for row in distinct_dates:
-        date_str = row["formatted_date"]
-        output_path = f's3a://{bucket}/{output_prefix}/{table_name}/dt={date_str}/'  # 生成带 bucket 和前缀的路径
-
-        # 过滤当前日期的数据并保存
-        df_with_date.filter(df_with_date["formatted_date"] == date_str) \
-            .coalesce(1) \
-            .write.mode('overwrite').parquet(output_path, compression='snappy')
 
 
 # 使用新的方式存储 AP_DATA, CLIENT_DATA, MULTIAP 数据
