@@ -448,13 +448,13 @@ def save_by_date_partitioning(df, table_name, bucket, output_prefix):
 
         df_with_date.filter(df_with_date["formatted_date"] == date_str) \
             .coalesce(1) \
-            .write.mode('overwrite').parquet(output_path, compression='snappy')
+            .write.mode('append').parquet(output_path, compression='snappy')
 
 # 生成日期范围并逐文件处理
-base_path = "/Users/sunhao/s3/qoe-raw/"
 pattern = "messages-*.txt.gz"
 
 for date_str in generate_date_range(start_date, end_date):
+    base_path = f's3://{bucket}/{input_prefix}/{date_str}/'
     input_files = list_files_with_pattern(base_path, pattern)
 
     if not input_files:
