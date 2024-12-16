@@ -389,6 +389,8 @@ start_date = '2024-10-09'  # 起始日期
 end_date = '2024-10-09'    # 结束日期
 
 # 生成日期范围并读取数据
+import glob
+import os
 from datetime import datetime, timedelta
 from pyspark.sql import functions as F
 
@@ -400,6 +402,10 @@ def generate_date_range(start_date, end_date):
     while current <= end:
         yield current.strftime("%Y/%m/%d")
         current += delta
+
+def list_files_with_pattern(base_path, pattern):
+    search_path = os.path.join(base_path, pattern)
+    return glob.glob(search_path)
 
 def process_file(file_path):
     try:
@@ -445,21 +451,19 @@ def save_by_date_partitioning(df, table_name, bucket, output_prefix):
             .write.mode('overwrite').parquet(output_path, compression='snappy')
 
 # 生成日期范围并逐文件处理
+base_path = "/Users/sunhao/s3/qoe-raw/"
+pattern = "messages-*.txt.gz"
+
 for date_str in generate_date_range(start_date, end_date):
-    input_path = f'/Users/sunhao/s3/qoe-raw/messages-*.txt.gz'
-    try:
-        file_list = sc._jsc.hadoopConfiguration().globStatus(input_path)
-        if not file_list:
-            print(f"No files found for path: {input_path}, skipping.")
-            continue
+    input_files = list_files_with_pattern(base_path, pattern)
 
-        for file_status in file_list:
-            file_path = file_status.getPath().toString()
-            print(f"Processing file: {file_path}")
-            process_file(file_path)
+    if not input_files:
+        print(f"No files found for date {date_str}, skipping.")
+        continue
 
-    except Exception as e:
-        print(f"Path not found or error processing: {input_path}, skipping. Error: {e}")
+    for file_path in input_files:
+        print(f"Processing file: {file_path}")
+        process_file(file_path)
 
 # 停止 SparkSession
 spark.stop()
