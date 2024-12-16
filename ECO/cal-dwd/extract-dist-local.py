@@ -4,7 +4,6 @@ from pyspark.sql.types import StructType, StructField,IntegerType, StringType, A
 import json
 import sys
 from pyspark import SparkContext
-from pyspark.sql import functions as F
 
 # 安全转换为整数的函数
 def f_int(value):
@@ -22,6 +21,8 @@ def f_float(value):
 
 
 # 定义解析 JSON 数据的函数
+import json
+
 def extract_qoe(json_str):
     try:
         # 去除转义
@@ -81,6 +82,8 @@ def extract_qoe(json_str):
     except Exception as e:
         print(f"Unknown error while parsing JSON: {e}, data: {json_str}")
         return []  # 返回空结果
+
+
 
 # 定义解析 AP_DATA 数据的函数
 def parse_ap_data(device_data_str, collection_time, controller_id):
@@ -248,185 +251,6 @@ def parse_multiap_data(multiap_data_str, collection_time, controller_id):
         print(f"Error parsing MULTIAP_DATA: {e}, data: {multiap_data_str}")
         raise
 
-
-# 通用函数：按日期存储数据，bucket 和 output_prefix 分开传递
-def save_by_date_partitioning(df, table_name, bucket, output_prefix):
-    # 将 collection_time 转换为日期格式 'YYYY-MM-DD'
-    df_with_date = df.withColumn("formatted_date", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd'))
-
-    # 获取所有不同的日期
-    distinct_dates = df_with_date.select("formatted_date").distinct().collect()
-
-    # 遍历每个日期进行分区存储
-    for row in distinct_dates:
-        date_str = row["formatted_date"]
-        output_path = f's3a://{bucket}/{output_prefix}/{table_name}/dt={date_str}/'  # 生成带 bucket 和前缀的路径
-
-        # 过滤当前日期的数据并保存
-        df_with_date.filter(df_with_date["formatted_date"] == date_str) \
-            .coalesce(1) \
-            .write.mode('overwrite').parquet(output_path, compression='snappy')
-
-
-
-# 生成日期范围并读取数据
-from datetime import datetime, timedelta
-def generate_date_range(start_date, end_date):
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    delta = timedelta(days=1)
-    current = start
-    while current <= end:
-        yield current.strftime("%Y/%m/%d")
-        current += delta
-
-
-# 数据结构体定义
-schema_qoe = ArrayType(StructType([
-    StructField("qoe_type", StringType(), True),
-    StructField("collection_time", StringType(), True),
-    StructField("controller_id", StringType(), True),
-    StructField("device_data_list", StringType(), True),
-    StructField("multiap_data_list", StringType(), True)
-]))
-
-schema_ap_data = ArrayType(StructType([
-    StructField("controller_id", StringType(), True),
-    StructField("device_id", StringType(), True),
-    StructField("band", StringType(), True),
-    StructField("collection_time", StringType(), True),
-    StructField("jitter", IntegerType(), True),
-    StructField("latency", IntegerType(), True),
-    StructField("wan_bandwidth", IntegerType(), True),
-    StructField("upload_bandwidth", IntegerType(), True),
-    StructField("wan_connectivity", IntegerType(), True),
-    StructField("wan_throughput", IntegerType(), True),
-    StructField("memory_free", IntegerType(), True),
-    StructField("memory_total", IntegerType(), True),
-    StructField("cpu_usage", IntegerType(), True),
-    StructField("number_of_alerts", IntegerType(), True),
-    StructField("is_controller", IntegerType(), True),
-    StructField("connectivity_score", DoubleType(), True),
-    StructField("available_bandwidth_score", DoubleType(), True),
-    StructField("internet_delay_score", DoubleType(), True),
-    StructField("internet_jitter_score", DoubleType(), True),
-    StructField("system_health_score", DoubleType(), True),
-    StructField("congestion_score", DoubleType(), True),
-    StructField("wifi_coverage_score", DoubleType(), True),
-    StructField("wifi_availability_score", DoubleType(), True),
-    StructField("noise", IntegerType(), True),
-    StructField("utilization", IntegerType(), True),
-    StructField("transmit", IntegerType(), True),
-    StructField("receive_self", IntegerType(), True),
-    StructField("receive_other", IntegerType(), True),
-    StructField("congestion_rate", IntegerType(), True),
-    StructField("associated_device_number_of_entries", IntegerType(), True),
-    StructField("average_rx_rate", IntegerType(), True),
-    StructField("average_tx_rate", IntegerType(), True),
-    StructField("bandwidth", StringType(), True),
-    StructField("bytes_sent", IntegerType(), True),
-    StructField("errors_pkt", IntegerType(), True),
-    StructField("ip_address", StringType(), True),
-    StructField("packets_received", IntegerType(), True),
-    StructField("packets_sent", IntegerType(), True),
-    StructField("errors_sent", IntegerType(), True),
-    StructField("errors_received", IntegerType(), True),
-    StructField("bytes_received", IntegerType(), True),
-    StructField("backhaul_sta_mac_address", StringType(), True),
-    StructField("backhaul_sta_backhaul_link_type", StringType(), True),
-    StructField("backhaul_sta_link_rate", IntegerType(), True),
-    StructField("backhaul_sta_signal_strength", IntegerType(), True),
-    StructField("backhaul_sta_utilization", IntegerType(), True)
-]))
-
-schema_client_data = ArrayType(StructType([
-    StructField("controller_id", StringType(), True),
-    StructField("device_id", StringType(), True),
-    StructField("radio_id", StringType(), True),
-    StructField("bss_id", StringType(), True),
-    StructField("sta_id", StringType(), True),
-    StructField("band", StringType(), True),
-    StructField("collection_time", StringType(), True),
-    StructField("sta_count", IntegerType(), True),
-    StructField("last_data_downlink_rate", IntegerType(), True),
-    StructField("last_data_uplink_rate", IntegerType(), True),
-    StructField("mac_address", StringType(), True),
-    StructField("signal_strength", IntegerType(), True),
-    StructField("host_name", StringType(), True),
-    StructField("ip_address", StringType(), True),
-    StructField("network_ready_time", IntegerType(), True),
-    StructField("wifi_connectivity", IntegerType(), True),
-    StructField("number_of_alerts", IntegerType(), True),
-    StructField("available_wifi_service_quality_score", DoubleType(), True),
-    StructField("network_ready_time_score", DoubleType(), True),
-    StructField("signal_strength_score", DoubleType(), True),
-    StructField("wifi_connectivity_score", DoubleType(), True),
-    StructField("wifi_protocol_score", DoubleType(), True),
-    StructField("client_health_score", DoubleType(), True),
-    StructField("rx_rate", IntegerType(), True),
-    StructField("tx_rate", IntegerType(), True),
-    StructField("retrans_count", IntegerType(), True),
-    StructField("est_mac_data_rate_downlink", IntegerType(), True),
-    StructField("est_mac_data_rate_uplink", IntegerType(), True),
-    StructField("fail_num", IntegerType(), True)
-]))
-
-schema_multiap_data = ArrayType(StructType([
-    StructField("controller_id", StringType(), True),
-    StructField("collection_time", StringType(), True),
-    StructField("device_id", StringType(), True),
-    StructField("mac_address", StringType(), True),
-    StructField("ip_address", StringType(), True),
-    StructField("host_name", StringType(), True),
-    StructField("up_speed", IntegerType(), True),
-    StructField("down_speed", IntegerType(), True),
-    StructField("link_speed", IntegerType(), True),
-    StructField("duplex_mode", StringType(), True),
-    StructField("active", IntegerType(), True),
-    StructField("packets_sent", IntegerType(), True),
-    StructField("packets_received", IntegerType(), True),
-    StructField("errors_sent", IntegerType(), True),
-    StructField("errors_received", IntegerType(), True),
-    StructField("interface_type", StringType(), True),
-    StructField("sta_count", IntegerType(), True)
-]))
-
-# 注册 UDF
-extract_udf = udf(extract_qoe, schema_qoe)
-parse_ap_data_udf = udf(parse_ap_data, schema_ap_data)
-parse_client_data_udf = udf(parse_client_data, schema_client_data)
-parse_multiap_data_udf = udf(parse_multiap_data, schema_multiap_data)
-
-
-# 初始化 SparkSession
-sc = SparkContext(appName="ReadLocalJSONFiles")
-spark = SparkSession.builder \
-    .appName(sc.appName) \
-    .config("spark.rpc.message.maxSize", "32MB") \
-    .config("spark.sql.debug.maxToStringFields", "1000") \
-    .getOrCreate()
-
-
-# 主执行代码
-bucket = sys.argv[1]
-input_prefix = sys.argv[2]
-output_prefix = sys.argv[3]
-start_date = sys.argv[4]
-end_date = sys.argv[5]
-
-df = spark.createDataFrame([], StringType()).toDF("value")
-
-for date_str in generate_date_range(start_date, end_date):
-    input_path = f's3://{bucket}/{input_prefix}/{date_str}/messages-*.txt.gz'
-    try:
-        file_rdd = sc.textFile(input_path)
-        json_list = file_rdd.zipWithIndex().filter(lambda x: (x[1] + 1) % 2 == 0).map(lambda x: json.loads(x[0])).collect()
-        df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
-        df = df.union(df_day)
-    except Exception as e:
-        print(f"Path not found or error processing: {input_path}, skipping. Error: {e}")
-
-
 # 初始化SparkSession
 sc = SparkContext(appName="ReadLocalJSONFiles")
 spark = SparkSession.builder \
@@ -434,6 +258,9 @@ spark = SparkSession.builder \
     .config("spark.rpc.message.maxSize", "32MB") \
     .config("spark.sql.debug.maxToStringFields", "1000") \
     .getOrCreate()
+
+# 指定读取文件路径
+# input_path = 's3a://aps1-tauc-data-analysis/aaa/'  # 输入路径
 
 # 定义 UDF 返回的 schema
 schema = ArrayType(StructType([
@@ -448,10 +275,30 @@ schema = ArrayType(StructType([
 extract_udf = udf(extract_qoe, schema)
 
 
+# 配置 S3 bucket 和路径
+# bucket = 'aps1-tauc-data-analysis'
+# 获取输入参数
+bucket = 'uat-tauc-aps1-data-analysis'
+input_prefix = 'source/qoe-raw-batch'
+output_prefix = 'dwd'
+start_date = '2024-10-09'  # 起始日期
+end_date = '2024-10-09'    # 结束日期
+
+# 生成日期范围并读取数据
+from datetime import datetime, timedelta
+def generate_date_range(start_date, end_date):
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    delta = timedelta(days=1)
+    current = start
+    while current <= end:
+        yield current.strftime("%Y/%m/%d")
+        current += delta
+
 df = spark.createDataFrame([], StringType()).toDF("value")  # 初始化空的 DataFrame
 
 for date_str in generate_date_range(start_date, end_date):
-    input_path = f's3://{bucket}/{input_prefix}/{date_str}/messages-*.txt.gz'
+    input_path = f'/Users/sunhao/s3/qoe-raw/messages-*.txt.gz'
     try:
 
         # # 使用Spark列出符合条件的文件（以messages-开头，.txt.gz结尾）
@@ -465,6 +312,11 @@ for date_str in generate_date_range(start_date, end_date):
         json_list = file_rdd.zipWithIndex().filter(lambda x: (x[1] + 1) % 2 == 0).map(lambda x: json.loads(x[0])).collect()
         df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
         df = df.union(df_day)
+        output_path = "./output/all_data.csv"
+
+        df.write.mode("overwrite").csv(output_path, header=True)
+        print(f"Data saved to {output_path}")
+
 
     except Exception as e:
         print(f"Path not found or error processing: {input_path}, skipping. Error: {e}")
@@ -617,7 +469,26 @@ print("Displaying the content of the QoE df_multiap_split/df_client_split/df_ap_
 df_multiap_split.show(truncate=False)
 df_client_split.show(truncate=False)
 df_ap_split.show(truncate=False)
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
+# 通用函数：按日期存储数据，bucket 和 output_prefix 分开传递
+def save_by_date_partitioning(df, table_name, bucket, output_prefix):
+    # 将 collection_time 转换为日期格式 'YYYY-MM-DD'
+    df_with_date = df.withColumn("formatted_date", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd'))
+
+    # 获取所有不同的日期
+    distinct_dates = df_with_date.select("formatted_date").distinct().collect()
+
+    # 遍历每个日期进行分区存储
+    for row in distinct_dates:
+        date_str = row["formatted_date"]
+        output_path = f'/Users/sunhao/s3/ods/{table_name}/dt={date_str}/'  # 生成带 bucket 和前缀的路径
+
+        # 过滤当前日期的数据并保存
+        df_with_date.filter(df_with_date["formatted_date"] == date_str) \
+            .coalesce(1) \
+            .write.mode('overwrite').parquet(output_path, compression='snappy')
 
 
 # 使用新的方式存储 AP_DATA, CLIENT_DATA, MULTIAP 数据
