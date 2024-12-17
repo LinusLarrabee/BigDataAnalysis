@@ -1,7 +1,7 @@
 from airflow import DAG
-from airflow.providers.amazon.aws.operators.emr_add_steps import EmrAddStepsOperator
-from airflow.providers.amazon.aws.sensors.emr_step import EmrStepSensor
-from airflow.providers.amazon.aws.operators.emr_create_job_flow import EmrCreateJobFlowOperator
+from airflow.providers.amazon.aws.operators.emr import EmrAddStepsOperator
+from airflow.providers.amazon.aws.sensors.emr import EmrStepSensor
+from airflow.providers.amazon.aws.operators.emr import EmrCreateJobFlowOperator
 from datetime import datetime, timedelta
 
 # 默认参数
