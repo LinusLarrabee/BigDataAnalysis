@@ -69,7 +69,7 @@ default_args = {
 
 dag = DAG(
     'tauc_qoe_extract_daily', max_active_runs=1, concurrency=2, default_args=default_args,
-    schedule_interval="30 5 * * *")
+    schedule_interval="0 2 * * *")
 
 
 def run_sensor_and_handle_failure(**kwargs):
