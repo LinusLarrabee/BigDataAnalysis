@@ -4,7 +4,6 @@ from pyspark.sql.types import StructType, StructField,IntegerType, StringType, A
 import json
 import sys
 from pyspark import SparkContext
-import boto3
 from pyspark.sql.types import StringType
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
@@ -401,12 +400,8 @@ def generate_date_range(start_date, end_date):
         yield current.strftime("%Y/%m/%d")
         current += delta
 
-def process_file(file_path):
+def process_file(df_day,date_str):
     try:
-        file_rdd = sc.textFile(file_path)
-        json_list = file_rdd.zipWithIndex().filter(lambda x: (x[1] + 1) % 2 == 0).map(lambda x: json.loads(x[0])).collect()
-        df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
-
         # 应用解析逻辑
         df_qoe_kind = df_day.withColumn("Qoe", explode(extract_udf(col("value")))).select(col("Qoe.*"))
 
@@ -430,7 +425,7 @@ def process_file(file_path):
         save_by_date_partitioning(df_multiap_split, "wire_data", bucket, output_prefix)
 
     except Exception as e:
-        print(f"Error processing file: {file_path}, skipping. Error: {e}")
+        print(f"Error processing file: {date_str}, skipping. Error: {e}")
 
 def save_by_date_partitioning(df, table_name, bucket, output_prefix):
     df_with_date = df.withColumn("formatted_date", F.date_format(F.from_unixtime(F.col("collection_time")), 'yyyy-MM-dd'))
@@ -445,32 +440,24 @@ def save_by_date_partitioning(df, table_name, bucket, output_prefix):
             .write.mode('append').parquet(output_path, compression='snappy')
 
 
-def list_files_with_pattern(bucket, prefix, pattern):
-    """
-    列出符合 pattern 的 S3 文件列表
-    """
-    s3 = boto3.client('s3')
-    response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-    if 'Contents' not in response:
-        return []
-    all_files = [f"s3://{bucket}/{content['Key']}" for content in response['Contents']]
-    return [file for file in all_files if file.split('/')[-1].startswith(pattern.split('*')[0])]
-
-
 # 主逻辑
 for date_str in generate_date_range(start_date, end_date):
-    # 构造 S3 基础路径
-    base_path = f's3://{bucket}/{input_prefix}/{date_str}/'
-    # 获取符合条件的文件列表
-    input_files = list_files_with_pattern(bucket, f"{input_prefix}/{date_str}", pattern)
+    input_path = f"s3://{bucket}/{input_prefix}/{date_str}/messages-*.txt.gz"
+    try:
+        print(f"Processing date: {date_str}, Path: {input_path}")
 
-    if not input_files:
-        print(f"No files found for date {date_str}, skipping.")
-        continue
+        # 使用 Spark 读取符合条件的文件
+        file_rdd = sc.textFile(input_path)
 
-    # 逐个处理文件
-    for file_path in input_files:
-        print(f"Processing file: {file_path}")
-        process_file(file_path)
+        # 过滤偶数行并解析为 JSON
+        json_list = file_rdd.zipWithIndex() \
+            .filter(lambda x: (x[1] + 1) % 2 == 0) \
+            .map(lambda x: json.loads(x[0])) \
+            .collect()
 
+        # 转换为 DataFrame
+        df_day = spark.createDataFrame(json_list, StringType()).toDF("value")
+        process_file(df_day,date_str)
+    except Exception as e:
+        print(f"Path not found or error processing: {input_path},date{date_str} skipping. Error: {e}")
 spark.stop()
