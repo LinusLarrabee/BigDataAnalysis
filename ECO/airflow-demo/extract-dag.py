@@ -63,9 +63,9 @@ add_spark_step = EmrAddStepsOperator(
                     "spark-submit",
                     "--master", "yarn",
                     "--deploy-mode", "cluster",
-                    "s3://uat-tauc-aps1-data-analysis/scripts/extract-dist-local.py",
-                    "--bucket", "uat-tauc-aps1-data-analysis",
-                    "--input_prefix", "source/qoe-raw-batch",
+                    "s3://dag-tauc-aps1-data-analysis/scripts/extract-dist.py",
+                    "--bucket", "dag-tauc-aps1-data-analysis",
+                    "--input_prefix", "source",
                     "--output_prefix", "dwd",
                     "--start_date", t_minus_1,
                     "--end_date", t_minus_1

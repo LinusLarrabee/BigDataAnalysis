@@ -4,7 +4,9 @@ from pyspark.sql.types import StructType, StructField,IntegerType, StringType, A
 import json
 import sys
 from pyspark import SparkContext
-
+import boto3
+from pyspark.sql.types import StringType
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
@@ -24,7 +26,6 @@ def f_float(value):
 
 
 # 定义解析 JSON 数据的函数
-import json
 
 def extract_qoe(json_str):
     try:
@@ -382,17 +383,14 @@ extract_udf = udf(extract_qoe, schema)
 # 配置 S3 bucket 和路径
 # bucket = 'aps1-tauc-data-analysis'
 # 获取输入参数
-bucket = 'uat-tauc-aps1-data-analysis'
-input_prefix = 'source/qoe-raw-batch'
-output_prefix = 'dwd'
-start_date = '2024-10-09'  # 起始日期
-end_date = '2024-10-09'    # 结束日期
+bucket = sys.argv[1]
+input_prefix = sys.argv[2]
+output_prefix = sys.argv[3]
+start_date = sys.argv[4]
+end_date = sys.argv[5]
+pattern = "messages-*.txt.gz"
 
 # 生成日期范围并读取数据
-import glob
-import os
-from datetime import datetime, timedelta
-from pyspark.sql import functions as F
 
 def generate_date_range(start_date, end_date):
     start = datetime.strptime(start_date, "%Y-%m-%d")
@@ -402,10 +400,6 @@ def generate_date_range(start_date, end_date):
     while current <= end:
         yield current.strftime("%Y/%m/%d")
         current += delta
-
-def list_files_with_pattern(base_path, pattern):
-    search_path = os.path.join(base_path, pattern)
-    return glob.glob(search_path)
 
 def process_file(file_path):
     try:
@@ -444,26 +438,39 @@ def save_by_date_partitioning(df, table_name, bucket, output_prefix):
 
     for row in distinct_dates:
         date_str = row["formatted_date"]
-        output_path = f'/Users/sunhao/s3/ods/{table_name}/dt={date_str}/'
+        output_path = f's3a://{bucket}/{output_prefix}/{table_name}/dt={date_str}/'  # 生成带 bucket 和前缀的路径
 
         df_with_date.filter(df_with_date["formatted_date"] == date_str) \
             .coalesce(1) \
             .write.mode('append').parquet(output_path, compression='snappy')
 
-# 生成日期范围并逐文件处理
-pattern = "messages-*.txt.gz"
 
+def list_files_with_pattern(bucket, prefix, pattern):
+    """
+    列出符合 pattern 的 S3 文件列表
+    """
+    s3 = boto3.client('s3')
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    if 'Contents' not in response:
+        return []
+    all_files = [f"s3://{bucket}/{content['Key']}" for content in response['Contents']]
+    return [file for file in all_files if file.split('/')[-1].startswith(pattern.split('*')[0])]
+
+
+# 主逻辑
 for date_str in generate_date_range(start_date, end_date):
+    # 构造 S3 基础路径
     base_path = f's3://{bucket}/{input_prefix}/{date_str}/'
-    input_files = list_files_with_pattern(base_path, pattern)
+    # 获取符合条件的文件列表
+    input_files = list_files_with_pattern(bucket, f"{input_prefix}/{date_str}", pattern)
 
     if not input_files:
         print(f"No files found for date {date_str}, skipping.")
         continue
 
+    # 逐个处理文件
     for file_path in input_files:
         print(f"Processing file: {file_path}")
         process_file(file_path)
 
-# 停止 SparkSession
 spark.stop()
