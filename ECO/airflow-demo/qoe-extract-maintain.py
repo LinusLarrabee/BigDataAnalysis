@@ -149,7 +149,9 @@ check_step_us_east_1 = PythonOperator(
     python_callable=run_sensor_and_handle_failure,
     op_kwargs={
         'job_flow_id': "{{ task_instance.xcom_pull('create_cluster_us_east_1', key='return_value') }}",
-        'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_us_east_1', key='return_value')[0] }}"
+        'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_us_east_1', key='return_value')[0] }}",
+        'aws_conn_id': 'aws_conn_use1',
+        'region_name': 'us-east-1'
     },
     provide_context=True,
     retries=1,
@@ -163,7 +165,6 @@ terminate_cluster_us_east_1 = EmrTerminateJobFlowOperator(
     dag=dag
 )
 
-create_cluster_us_east_1 >> add_step_us_east_1 >> check_step_us_east_1 >> terminate_cluster_us_east_1
 
 # eu-west-1 任务链
 create_cluster_eu_west_1 = EmrCreateJobFlowOperator(
@@ -203,7 +204,9 @@ check_step_eu_west_1 = PythonOperator(
     python_callable=run_sensor_and_handle_failure,
     op_kwargs={
         'job_flow_id': "{{ task_instance.xcom_pull('create_cluster_eu_west_1', key='return_value') }}",
-        'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_eu_west_1', key='return_value')[0] }}"
+        'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_eu_west_1', key='return_value')[0] }}",
+        'aws_conn_id': 'aws_conn_euw1',
+        'region_name': 'eu-west-1'
     },
     provide_context=True,
     retries=1,
@@ -217,7 +220,6 @@ terminate_cluster_eu_west_1 = EmrTerminateJobFlowOperator(
     dag=dag
 )
 
-create_cluster_eu_west_1 >> add_step_eu_west_1 >> check_step_eu_west_1 >> terminate_cluster_eu_west_1
 
 # ap-southeast-1 任务链
 create_cluster_ap_southeast_1 = EmrCreateJobFlowOperator(
@@ -257,7 +259,9 @@ check_step_ap_southeast_1 = PythonOperator(
     python_callable=run_sensor_and_handle_failure,
     op_kwargs={
         'job_flow_id': "{{ task_instance.xcom_pull('create_cluster_ap_southeast_1', key='return_value') }}",
-        'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_ap_southeast_1', key='return_value')[0] }}"
+        'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_ap_southeast_1', key='return_value')[0] }}",
+        'aws_conn_id': 'aws_conn_aps1',
+        'region_name': 'ap-southeast-1'
     },
     provide_context=True,
     retries=1,
@@ -270,5 +274,9 @@ terminate_cluster_ap_southeast_1 = EmrTerminateJobFlowOperator(
     aws_conn_id='aws_conn_aps1',
     dag=dag
 )
+
+create_cluster_us_east_1 >> add_step_us_east_1 >> check_step_us_east_1 >> terminate_cluster_us_east_1
+
+create_cluster_eu_west_1 >> add_step_eu_west_1 >> check_step_eu_west_1 >> terminate_cluster_eu_west_1
 
 create_cluster_ap_southeast_1 >> add_step_ap_southeast_1 >> check_step_ap_southeast_1 >> terminate_cluster_ap_southeast_1
