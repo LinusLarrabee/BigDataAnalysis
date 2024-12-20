@@ -88,6 +88,7 @@ def get_object(key, bucket_name):
 def run_sensor_and_handle_failure(**kwargs):
     job_flow_id = kwargs['job_flow_id']
     step_id = kwargs['step_id']
+    aws_conn_id = kwargs['aws_conn_id']  # 参数化 AWS 连接 ID
     stdout_key = f'emr/emr_log/tauc/{DAG_ID}/{job_flow_id}/steps/{step_id}/stdout.gz'
     stderr_key = f'emr/emr_log/tauc/{DAG_ID}/{job_flow_id}/steps/{step_id}/stderr.gz'
     try:
@@ -95,7 +96,7 @@ def run_sensor_and_handle_failure(**kwargs):
             task_id='check_step_status',
             job_flow_id=kwargs['job_flow_id'],
             step_id=kwargs['step_id'],
-            aws_conn_id="aws_default_use1",
+            aws_conn_id=aws_conn_id,
             poke_interval=30,
             timeout=60 * 60,
             dag=dag
@@ -150,8 +151,7 @@ check_step_us_east_1 = PythonOperator(
     op_kwargs={
         'job_flow_id': "{{ task_instance.xcom_pull('create_cluster_us_east_1', key='return_value') }}",
         'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_us_east_1', key='return_value')[0] }}",
-        'aws_conn_id': 'aws_conn_use1',
-        'region_name': 'us-east-1'
+        'aws_conn_id': 'aws_conn_use1'
     },
     provide_context=True,
     retries=1,
@@ -205,8 +205,7 @@ check_step_eu_west_1 = PythonOperator(
     op_kwargs={
         'job_flow_id': "{{ task_instance.xcom_pull('create_cluster_eu_west_1', key='return_value') }}",
         'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_eu_west_1', key='return_value')[0] }}",
-        'aws_conn_id': 'aws_conn_euw1',
-        'region_name': 'eu-west-1'
+        'aws_conn_id': 'aws_conn_euw1'
     },
     provide_context=True,
     retries=1,
@@ -260,8 +259,7 @@ check_step_ap_southeast_1 = PythonOperator(
     op_kwargs={
         'job_flow_id': "{{ task_instance.xcom_pull('create_cluster_ap_southeast_1', key='return_value') }}",
         'step_id': "{{ task_instance.xcom_pull(task_ids='add_step_ap_southeast_1', key='return_value')[0] }}",
-        'aws_conn_id': 'aws_conn_aps1',
-        'region_name': 'ap-southeast-1'
+        'aws_conn_id': 'aws_conn_aps1'
     },
     provide_context=True,
     retries=1,
